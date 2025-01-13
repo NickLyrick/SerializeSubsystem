@@ -7,8 +7,6 @@
 
 #include "SaveGameSubsystem.generated.h"
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnLevelLoadedDelegate);
-
 /**
  * The subsystem that manages the lifetime of a save game.
  */
@@ -28,9 +26,6 @@ public:
 
   UFUNCTION(BlueprintCallable, Category = "SaveGamePlugin|Load")
   bool IsLoadingSaveGame() const;
-
-  UPROPERTY(BlueprintAssignable, Category = "SaveGamePlugin|Load")
-  FOnLevelLoadedDelegate OnLevelLoadedDelegate;
 
 protected:
   void OnWorldInitialized(UWorld *World, const UWorld::InitializationValues);

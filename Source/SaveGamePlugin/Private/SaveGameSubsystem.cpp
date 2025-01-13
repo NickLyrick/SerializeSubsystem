@@ -172,8 +172,6 @@ void USaveGameSubsystem::OnLevelAddedToWorld(ULevel *Level, UWorld *World) {
   }
 
   if (SerializedData.IsValid()) {
-    GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red,
-                                     TEXT("Loading Streaming Levels"));
     const TSoftObjectPtr<ULevel> CurrentLevel = GetWorld()->GetCurrentLevel();
 
     Serializers.Empty();
@@ -213,9 +211,6 @@ void USaveGameSubsystem::OnLevelRemovedFromWorld(ULevel *Level, UWorld *World) {
       PersistentLevelRecord->FindStreamingLevel(Level);
 
   if (SerializedData.IsValid()) {
-    GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Blue,
-                                     TEXT("Saving Streaming Levels"));
-    // SaveStreamingLevels(*SerializedData);
     TSaveGameSerializer<false> BinarySerializer(this);
 
     SerializedData->Levels.FindOrAdd(LevelCurrent)
@@ -276,8 +271,9 @@ void USaveGameSubsystem::OnActorDestroyed(AActor *Actor) {
 }
 
 void USaveGameSubsystem::OnLoadCompleted() {
-  OnLevelLoadedDelegate.Broadcast();
   CurrentSerializer = nullptr;
+  
+  LoadStreamingLevels(*SerializedData);
 }
 
 void USaveGameSubsystem::LoadStreamingLevels(FSerializedData Data) {
