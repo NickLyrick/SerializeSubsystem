@@ -49,10 +49,7 @@ protected:
 private:
   template <bool, bool> friend class TSaveGameSerializer;
   TSharedPtr<class FSaveGameSerializer, ESPMode::ThreadSafe> CurrentSerializer;
-  TArray<TSharedPtr<FSaveGameSerializer>> Serializers;
 
   TSharedPtr<FLevelStruct> PersistentLevelRecord;
   TSharedPtr<FSerializedData> SerializedData = MakeShared<FSerializedData>();
-
-  bool bIsLoading = false;
 };

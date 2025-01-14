@@ -20,7 +20,8 @@ struct FLevelData {
   TArray<uint8> Data = {};
 
   UPROPERTY(EditAnywhere, BlueprintReadWrite)
-  TMap<TSoftObjectPtr<ULevelStreaming>, FStreamingLevelData> StreamingLevels = {};
+  TMap<TSoftObjectPtr<ULevelStreaming>, FStreamingLevelData> StreamingLevels =
+      {};
 };
 
 // Struct to hold data for the entire game.
@@ -28,10 +29,9 @@ USTRUCT(BlueprintType, Blueprintable)
 struct FSerializedData {
   GENERATED_BODY()
 
-
   UPROPERTY(BlueprintReadWrite, meta = (HideInDetailPanel))
   TArray<uint8> Header = {};
-  
+
   UPROPERTY(EditAnywhere, BlueprintReadWrite)
   TSoftObjectPtr<ULevel> CurrentLevel;
 
