@@ -80,7 +80,6 @@ private:
   // static FString GetSaveName();
 
   void OnMapLoad(UWorld *World);
-  // void OnStreamingLevelLoad(ULevel *Level, UWorld *World);
 
   /** Serializes information about the archive, like Engine Version or position
    * of versioning information */
