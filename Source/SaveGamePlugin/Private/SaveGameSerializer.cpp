@@ -364,15 +364,9 @@ TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeStreamingLevelData(
 
   check(SaveGameSubsystem.IsValid());
 
-  bool bIsLevelLoaded = StreamingLevel->IsLevelLoaded();
-  bool bIsLevelVisible = StreamingLevel->IsLevelVisible();
-
-  RootRecord << SA_VALUE(TEXT("Loaded"), bIsLevelLoaded);
-  RootRecord << SA_VALUE(TEXT("Visible"), bIsLevelVisible);
-
   // Double check that the level is loaded
   // This is to ensure that the level is loaded before we serialize the actors
-  if (bIsLevelLoaded && StreamingLevel->IsLevelLoaded())
+  if (StreamingLevel->IsLevelLoaded())
     SerializeStreamingLevel(StreamingLevel);
 
   // Be sure to close this, as you'll be missing closed braces for JSON
@@ -416,18 +410,9 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::
     SerializeCompressedData<true>(CompressorArchive, Data);
   }
 
-  bool bIsLevelLoaded;
-  bool bIsLevelVisible;
-
-  RootRecord << SA_VALUE(TEXT("Loaded"), bIsLevelLoaded);
-  RootRecord << SA_VALUE(TEXT("Visible"), bIsLevelVisible);
-
-  StreamingLevel->SetShouldBeLoaded(bIsLevelLoaded);
-  StreamingLevel->SetShouldBeVisible(bIsLevelVisible);
-
   // Double check that the level is loaded
   // This is to ensure that the level is loaded before we serialize the actors
-  if (bIsLevelLoaded && StreamingLevel->IsLevelLoaded()) {
+  if (StreamingLevel->IsLevelLoaded()) {
     SerializeStreamingLevel(StreamingLevel);
   }
 }
@@ -455,24 +440,6 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::OnMapLoad(UWorld *World) {
   TRACE_BOOKMARK(TEXT("End: LoadSaveGame[%s]"),
                  bIsTextFormat ? TEXT("Text") : TEXT("Binary"));
 }
-
-// template <bool bIsLoading, bool bIsTextFormat>
-// void TSaveGameSerializer<bIsLoading, bIsTextFormat>::OnStreamingLevelLoad(
-//     ULevel *Level, UWorld *World) {
-//   FWorldDelegates::LevelAddedToWorld.RemoveAll(this);
-//
-//   check(SaveGameSubsystem->GetWorld() == World);
-//
-//   TSoftObjectPtr<ULevelStreaming> StreamingLevel =
-//       SaveGameSubsystem->PersistentLevelRecord->FindStreamingLevel(Level);
-//
-//   if (StreamingLevel.IsValid()) {
-//     SerializeStreamingLevel(StreamingLevel);
-//   }
-//
-//   TRACE_BOOKMARK(TEXT("End: LoadSaveGame[%s]"),
-//                  bIsTextFormat ? TEXT("Text") : TEXT("Binary"));
-// }
 
 template <bool bIsLoading, bool bIsTextFormat>
 void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeHeader() {
@@ -542,6 +509,7 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeStreamingLevel(
                         ->Actors->SaveGame,
                     ActorsSlot);
 
+    // TODO: implement this
     // FStructuredArchive::FSlot DestroyedActorsSlot =
     //     RootRecord.EnterField(TEXT("DestroyedActors"));
     // SerializeDestroyedActors(StreamingLevel->GetLoadedLevel(),

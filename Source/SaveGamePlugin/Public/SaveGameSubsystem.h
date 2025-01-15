@@ -15,8 +15,10 @@ class SAVEGAMEPLUGIN_API USaveGameSubsystem : public UGameInstanceSubsystem {
   GENERATED_BODY()
 
 public:
+  /* Subsystem API */
   virtual void Initialize(FSubsystemCollectionBase &Collection) override;
   virtual void Deinitialize() override;
+  /* End Subsystem API */
 
   UFUNCTION(BlueprintCallable, Category = "SaveGamePlugin|Save")
   void Save(UPARAM(DisplayName = "Serialized Data") FSerializedData &Data);
@@ -27,24 +29,26 @@ public:
   UFUNCTION(BlueprintCallable, Category = "SaveGamePlugin|Load")
   bool IsLoadingSaveGame() const;
 
+private:
+  void SaveStreamingLevels(FSerializedData &Data);
+  void LoadStreamingLevels(FSerializedData Data);
+
 protected:
+  // World Event Handlers
   void OnWorldInitialized(UWorld *World, const UWorld::InitializationValues);
   void OnActorsInitialized(const FActorsInitializedParams &Params);
   void OnWorldCleanup(UWorld *World, bool, bool);
 
-  // Streaming Level Events
+  // Streaming Level Event Handlers
   void OnLevelAddedToWorld(ULevel *Level, UWorld *World);
   void OnLevelRemovedFromWorld(ULevel *Level, UWorld *World);
 
+  // Actor Event Handlers
   void OnActorPreSpawn(AActor *Actor);
   void OnActorDestroyed(AActor *Actor);
 
+  // Deferred Event Handlers
   void OnLoadCompleted();
-
-  UFUNCTION(BlueprintCallable, Category = "SaveGamePlugin|Load")
-  void LoadStreamingLevels(FSerializedData Data);
-
-  void SaveStreamingLevels(FSerializedData &Data);
 
 private:
   template <bool, bool> friend class TSaveGameSerializer;
