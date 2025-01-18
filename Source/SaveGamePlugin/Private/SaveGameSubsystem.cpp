@@ -66,7 +66,7 @@ void USaveGameSubsystem::Save(FSerializedData &Data) {
 #endif
 
   // Serialize Streaming Levels Data
-  SaveStreamingLevels(*SerializedData);
+  SaveStreamingLevels();
 
   Data = *SerializedData;
 }
@@ -104,13 +104,13 @@ bool USaveGameSubsystem::IsLoadingSaveGame() const {
 }
 
 // Used to serialize the streaming levels data
-void USaveGameSubsystem::SaveStreamingLevels(FSerializedData &Data) {
-  Data.CurrentLevel = GetWorld()->GetCurrentLevel();
+void USaveGameSubsystem::SaveStreamingLevels() {
+  SerializedData->CurrentLevel = GetWorld()->GetCurrentLevel();
 
   // Serialize Streaming Levels Data
   for (TPair StreamingLevel : PersistentLevelRecord->StreamingLevels) {
     // Save the state of the streaming level
-    Data.Levels.FindOrAdd(Data.CurrentLevel.Get())
+    SerializedData->Levels.FindOrAdd(SerializedData->CurrentLevel.Get())
         .StreamingLevels.FindOrAdd(StreamingLevel.Key)
         .SaveStreamingLevelState(StreamingLevel.Key);
 
@@ -122,7 +122,7 @@ void USaveGameSubsystem::SaveStreamingLevels(FSerializedData &Data) {
 
     // Actually serialize the streaming level data
     TSaveGameSerializer<false> BinarySerializer(this);
-    Data.Levels.FindOrAdd(Data.CurrentLevel.Get())
+    SerializedData->Levels.FindOrAdd(SerializedData->CurrentLevel.Get())
         .StreamingLevels.FindOrAdd(StreamingLevel.Key)
         .Data =
         BinarySerializer.SerializeStreamingLevelData(StreamingLevel.Key);
@@ -136,13 +136,13 @@ void USaveGameSubsystem::SaveStreamingLevels(FSerializedData &Data) {
 }
 
 // Used to deserialize the streaming levels data
-void USaveGameSubsystem::LoadStreamingLevels(FSerializedData Data) {
+void USaveGameSubsystem::LoadStreamingLevels() {
   if (!SerializedData.IsValid())
     return;
 
   for (TPair StreamingLevel : PersistentLevelRecord->StreamingLevels) {
     // Load State of Streaming Level (bIsVisible and bIsLoad)
-    Data.Levels.FindOrAdd(Data.CurrentLevel.Get())
+    SerializedData->Levels.FindOrAdd(SerializedData->CurrentLevel.Get())
         .StreamingLevels.FindOrAdd(StreamingLevel.Key)
         .LoadStreamingLevelState(StreamingLevel.Key);
 
@@ -154,7 +154,7 @@ void USaveGameSubsystem::LoadStreamingLevels(FSerializedData Data) {
         TSaveGameSerializer<true>(this);
     BinarySerializer.DeserializeStreamingLevelData(
         StreamingLevel.Key.Get(),
-        Data.Levels.FindOrAdd(Data.CurrentLevel.Get())
+        SerializedData->Levels.FindOrAdd(SerializedData->CurrentLevel.Get())
             .StreamingLevels.FindOrAdd(StreamingLevel.Key)
             .Data);
   }
@@ -168,6 +168,7 @@ void USaveGameSubsystem::OnWorldInitialized(
   }
 
   PersistentLevelRecord = MakeShared<FLevelStruct>(World);
+  SerializedData->CurrentLevel = World->GetCurrentLevel();
 
   // Register for Actor Pre-Spawn and Destroyed handlers
   World->AddOnActorPreSpawnInitialization(
@@ -342,5 +343,5 @@ void USaveGameSubsystem::OnLoadCompleted() {
   // On this point, we have all the data from the persistent level loaded, and
   // we can load the streaming levels
   if (SerializedData.IsValid())
-    LoadStreamingLevels(*SerializedData);
+    LoadStreamingLevels();
 }

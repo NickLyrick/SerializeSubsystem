@@ -30,8 +30,8 @@ public:
   bool IsLoadingSaveGame() const;
 
 private:
-  void SaveStreamingLevels(FSerializedData &Data);
-  void LoadStreamingLevels(FSerializedData Data);
+  void SaveStreamingLevels();
+  void LoadStreamingLevels();
 
 protected:
   // World Event Handlers
