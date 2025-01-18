@@ -50,11 +50,6 @@ void USaveGameSubsystem::Save(FSerializedData &Data) {
         BinarySerializer.SerializeLevelData(Level.Get());
   }
 
-  // Serialize Streaming Levels Data
-  SaveStreamingLevels(*SerializedData);
-
-  Data = *SerializedData;
-
 #if !UE_BUILD_SHIPPING && WITH_TEXT_ARCHIVE_SUPPORT
   // This is for debug purposes only, we want to use binary serialization
   // for smallest file sizes
@@ -68,19 +63,15 @@ void USaveGameSubsystem::Save(FSerializedData &Data) {
 
     TextSerializer.SerializeLevelData(Level.Get());
   }
-
-  // // Serialize Streaming Levels Data
-  // for (TPair StreamingLevel : PersistentLevelRecord->StreamingLevels) {
-  //   TSaveGameSerializer<false, true> TextSerializer(this);
-  //
-  //   TextSerializer.SerializeStreamingLevelData(StreamingLevel.Key.Get());
-  // }
-
 #endif
+
+  // Serialize Streaming Levels Data
+  SaveStreamingLevels();
+
+  Data = *SerializedData;
 }
 
 void USaveGameSubsystem::Load(FSerializedData Data) {
-  const TSoftObjectPtr<ULevel> Level = GetWorld()->GetCurrentLevel();
   *SerializedData = Data;
 
   {
@@ -89,20 +80,87 @@ void USaveGameSubsystem::Load(FSerializedData Data) {
   }
 
   {
+    // IMPORTANT:
+    // This pointer is used to keep the serializer alive until the end of the
+    // load. We use seamless travel to load the persistent level, that is kinda
+    // asynchronous. We trigger loading here but the level will be serialized in
+    // the OnMapLoad event.
     const TSharedRef<TSaveGameSerializer<true>> BinarySerializer =
         MakeShared<TSaveGameSerializer<true>>(this);
     CurrentSerializer = BinarySerializer.ToSharedPtr();
 
-    bIsLoading = true;
     BinarySerializer->DeserializeLevelData(
-        Level.Get(), SerializedData->Levels[Level.Get()].Data);
+        SerializedData->CurrentLevel.Get(),
+        SerializedData->Levels[SerializedData->CurrentLevel.Get()].Data);
   }
+
+  // NOTICE:
+  // Deserialization of Streaming Levels is done in OnMapLoad that will be
+  // called after the persistent level will be loaded
 }
 
 bool USaveGameSubsystem::IsLoadingSaveGame() const {
   return CurrentSerializer.IsValid();
 }
 
+// Used to serialize the streaming levels data
+void USaveGameSubsystem::SaveStreamingLevels() {
+  SerializedData->CurrentLevel = GetWorld()->GetCurrentLevel();
+
+  // Serialize Streaming Levels Data
+  for (TPair StreamingLevel : PersistentLevelRecord->StreamingLevels) {
+    // Save the state of the streaming level
+    SerializedData->Levels.FindOrAdd(SerializedData->CurrentLevel.Get())
+        .StreamingLevels.FindOrAdd(StreamingLevel.Key)
+        .SaveStreamingLevelState(StreamingLevel.Key);
+
+    // We want only to serialize the streaming level if it is loaded
+    // In other way we will overwrite the data of unloaded levels with empty
+    // data
+    if (!StreamingLevel.Key->IsLevelLoaded())
+      continue;
+
+    // Actually serialize the streaming level data
+    TSaveGameSerializer<false> BinarySerializer(this);
+    SerializedData->Levels.FindOrAdd(SerializedData->CurrentLevel.Get())
+        .StreamingLevels.FindOrAdd(StreamingLevel.Key)
+        .Data =
+        BinarySerializer.SerializeStreamingLevelData(StreamingLevel.Key);
+
+#if !UE_BUILD_SHIPPING && WITH_TEXT_ARCHIVE_SUPPORT
+    // And for Testing purposes, save some streaming levels data in text format
+    TSaveGameSerializer<false, true> TextSerializer(this);
+    TextSerializer.SerializeStreamingLevelData(StreamingLevel.Key);
+#endif
+  }
+}
+
+// Used to deserialize the streaming levels data
+void USaveGameSubsystem::LoadStreamingLevels() {
+  if (!SerializedData.IsValid())
+    return;
+
+  for (TPair StreamingLevel : PersistentLevelRecord->StreamingLevels) {
+    // Load State of Streaming Level (bIsVisible and bIsLoad)
+    SerializedData->Levels.FindOrAdd(SerializedData->CurrentLevel.Get())
+        .StreamingLevels.FindOrAdd(StreamingLevel.Key)
+        .LoadStreamingLevelState(StreamingLevel.Key);
+
+    // We can't deserialize the streaming level if it is not loaded
+    if (!StreamingLevel.Key->IsLevelLoaded())
+      continue;
+
+    TSaveGameSerializer<true> BinarySerializer =
+        TSaveGameSerializer<true>(this);
+    BinarySerializer.DeserializeStreamingLevelData(
+        StreamingLevel.Key.Get(),
+        SerializedData->Levels.FindOrAdd(SerializedData->CurrentLevel.Get())
+            .StreamingLevels.FindOrAdd(StreamingLevel.Key)
+            .Data);
+  }
+}
+
+// This is called after the persistent level is initialized
 void USaveGameSubsystem::OnWorldInitialized(
     UWorld *World, const UWorld::InitializationValues) {
   if (!IsValid(World) || GetWorld() != World) {
@@ -110,7 +168,9 @@ void USaveGameSubsystem::OnWorldInitialized(
   }
 
   PersistentLevelRecord = MakeShared<FLevelStruct>(World);
+  SerializedData->CurrentLevel = World->GetCurrentLevel();
 
+  // Register for Actor Pre-Spawn and Destroyed handlers
   World->AddOnActorPreSpawnInitialization(
       FOnActorSpawned::FDelegate::CreateUObject(this,
                                                 &ThisClass::OnActorPreSpawn));
@@ -118,6 +178,7 @@ void USaveGameSubsystem::OnWorldInitialized(
       this, &ThisClass::OnActorDestroyed));
 }
 
+// This is called after the all actors of the level are initialized
 void USaveGameSubsystem::OnActorsInitialized(
     const FActorsInitializedParams &Params) {
   if (!IsValid(Params.World) || GetWorld() != Params.World) {
@@ -132,6 +193,10 @@ void USaveGameSubsystem::OnActorsInitialized(
       continue;
 
     TWeakObjectPtr Level = Actor->GetLevel();
+
+    /* Check if the actor is in the persistent level or a streaming level and
+     * add it to the appropriate list
+     * */
 
     if (Level.Get() == Params.World->GetCurrentLevel()) {
       PersistentLevelRecord->Actors->SaveGame.Add(Actor);
@@ -149,6 +214,7 @@ void USaveGameSubsystem::OnActorsInitialized(
   }
 }
 
+// This is called when the world is cleaned up
 void USaveGameSubsystem::OnWorldCleanup(UWorld *World, bool, bool) {
   if (!IsValid(World) || GetWorld() != World) {
     return;
@@ -157,6 +223,7 @@ void USaveGameSubsystem::OnWorldCleanup(UWorld *World, bool, bool) {
   PersistentLevelRecord->ResetActors();
 }
 
+// This is called when a streaming level is added to the world
 void USaveGameSubsystem::OnLevelAddedToWorld(ULevel *Level, UWorld *World) {
   if (!IsValid(Level) || GetWorld() != World)
     return;
@@ -172,41 +239,37 @@ void USaveGameSubsystem::OnLevelAddedToWorld(ULevel *Level, UWorld *World) {
   }
 
   if (SerializedData.IsValid()) {
-    const TSoftObjectPtr<ULevel> CurrentLevel = GetWorld()->GetCurrentLevel();
+    const bool bIsStreamingLevelDataExists =
+        SerializedData->Levels.Contains(SerializedData->CurrentLevel) &&
+        SerializedData->Levels[SerializedData->CurrentLevel]
+            .StreamingLevels.Contains(StreamingLevel);
 
-    Serializers.Empty();
+    if (bIsStreamingLevelDataExists) {
+      // If we have data for the streaming level, deserialize it
+      // One of the edge cases. When we already store streaming level state but
+      // never serialize it
+      if (SerializedData->Levels[SerializedData->CurrentLevel]
+              .StreamingLevels[StreamingLevel]
+              .Data.IsEmpty())
+        return;
 
-    if (!SerializedData->Levels.Contains(CurrentLevel) ||
-        !SerializedData->Levels[CurrentLevel].StreamingLevels.Contains(
-            StreamingLevel)) {
-      TSaveGameSerializer<false> BinarySerializer(this);
-      SerializedData->Levels.FindOrAdd(CurrentLevel)
-          .StreamingLevels.FindOrAdd(StreamingLevel)
-          .Data = BinarySerializer.SerializeStreamingLevelData(StreamingLevel);
-
-#if !UE_BUILD_SHIPPING && WITH_TEXT_ARCHIVE_SUPPORT
-      TSaveGameSerializer<false, true> TextSerializer(this);
-      TextSerializer.SerializeStreamingLevelData(StreamingLevel);
-#endif
+      TSaveGameSerializer<true> BinarySerializer =
+          TSaveGameSerializer<true>(this);
+      BinarySerializer.DeserializeStreamingLevelData(
+          StreamingLevel, SerializedData->Levels[SerializedData->CurrentLevel]
+                              .StreamingLevels[StreamingLevel]
+                              .Data);
     }
-    // return;
-
-    TSharedPtr<TSaveGameSerializer<true>> BinarySerializer =
-        MakeShared<TSaveGameSerializer<true>>(this);
-
-    BinarySerializer->DeserializeStreamingLevelData(
-        StreamingLevel, SerializedData->Levels[CurrentLevel]
-                            .StreamingLevels[StreamingLevel]
-                            .Data);
-    Serializers.Add(BinarySerializer);
   }
 }
 
+// This is called just before the moment when a streaming level is removed from
+// the world (in this case, the level is still loaded)
 void USaveGameSubsystem::OnLevelRemovedFromWorld(ULevel *Level, UWorld *World) {
   if (!IsValid(Level) || GetWorld() != World)
     return;
-  const TSoftObjectPtr<ULevel> LevelCurrent = GetWorld()->GetCurrentLevel();
 
+  const TSoftObjectPtr<ULevel> LevelCurrent = GetWorld()->GetCurrentLevel();
   const TSoftObjectPtr<ULevelStreaming> StreamingLevel =
       PersistentLevelRecord->FindStreamingLevel(Level);
 
@@ -216,7 +279,7 @@ void USaveGameSubsystem::OnLevelRemovedFromWorld(ULevel *Level, UWorld *World) {
     SerializedData->Levels.FindOrAdd(LevelCurrent)
         .StreamingLevels.FindOrAdd(StreamingLevel)
         .Data = BinarySerializer.SerializeStreamingLevelData(StreamingLevel);
-        
+
 #if !UE_BUILD_SHIPPING && WITH_TEXT_ARCHIVE_SUPPORT
     TSaveGameSerializer<false, true> TextSerializer(this);
     TextSerializer.SerializeStreamingLevelData(StreamingLevel);
@@ -229,6 +292,7 @@ void USaveGameSubsystem::OnLevelRemovedFromWorld(ULevel *Level, UWorld *World) {
       ->Actors->Destroyed.Reset();
 }
 
+// This is called just before an actor is spawned
 void USaveGameSubsystem::OnActorPreSpawn(AActor *Actor) {
   if (!IsValid(Actor))
     return;
@@ -256,6 +320,7 @@ void USaveGameSubsystem::OnActorPreSpawn(AActor *Actor) {
   }
 }
 
+// This is called just before an actor is destroyed
 void USaveGameSubsystem::OnActorDestroyed(AActor *Actor) {
   if (PersistentLevelRecord->Actors->SaveGame.Remove(Actor)) {
     if (USaveGameFunctionLibrary::WasObjectLoaded(Actor))
@@ -270,46 +335,13 @@ void USaveGameSubsystem::OnActorDestroyed(AActor *Actor) {
   }
 }
 
+// This is called after the persistent level is loaded and all data on the
+// persistent level is deserialized
 void USaveGameSubsystem::OnLoadCompleted() {
   CurrentSerializer = nullptr;
-  
-  LoadStreamingLevels(*SerializedData);
-}
 
-void USaveGameSubsystem::LoadStreamingLevels(FSerializedData Data) {
-  const TSoftObjectPtr<ULevel> Level = GetWorld()->GetCurrentLevel();
-
-  Serializers.Empty();
-  for (TPair StreamingLevel : PersistentLevelRecord->StreamingLevels) {
-    TSharedPtr<TSaveGameSerializer<true>> BinarySerializer =
-        MakeShared<TSaveGameSerializer<true>>(this);
-
-    BinarySerializer->DeserializeStreamingLevelData(
-        StreamingLevel.Key.Get(),
-        Data.Levels.FindOrAdd(Level)
-            .StreamingLevels.FindOrAdd(StreamingLevel.Key)
-            .Data);
-    Serializers.Add(BinarySerializer);
-  }
-}
-
-void USaveGameSubsystem::SaveStreamingLevels(FSerializedData &Data) {
-  const TSoftObjectPtr<ULevel> Level = GetWorld()->GetCurrentLevel();
-
-  // Serialize Streaming Levels Data
-  for (TPair StreamingLevel : PersistentLevelRecord->StreamingLevels) {
-    TSaveGameSerializer<false> BinarySerializer(this);
-    if (!StreamingLevel.Key->IsLevelLoaded())
-      continue;
-
-    Data.Levels.FindOrAdd(Level.Get())
-        .StreamingLevels.FindOrAdd(StreamingLevel.Key)
-        .Data =
-        BinarySerializer.SerializeStreamingLevelData(StreamingLevel.Key);
-
-#if !UE_BUILD_SHIPPING && WITH_TEXT_ARCHIVE_SUPPORT
-    TSaveGameSerializer<false, true> TextSerializer(this);
-    TextSerializer.SerializeStreamingLevelData(StreamingLevel.Key);
-#endif
-  }
+  // On this point, we have all the data from the persistent level loaded, and
+  // we can load the streaming levels
+  if (SerializedData.IsValid())
+    LoadStreamingLevels();
 }

@@ -1,6 +1,4 @@
-﻿// Copyright Alex Stevens (@MilkyEngineer). All Rights Reserved.
-
-#pragma once
+﻿#pragma once
 
 #if WITH_TEXT_ARCHIVE_SUPPORT
 #include "Serialization/Formatters/JsonArchiveOutputFormatter.h"
@@ -16,23 +14,25 @@ public:
   virtual ~FSaveGameSerializer() = default;
 };
 
+// TODO: This comment is incorrect
 /**
  * The class that manages serializing the world.
  *
  * Archive data structured like so:
  * - Header
- *		- Map Name
  *		- Engine Versions
- * - Actors
- *		- Actor Name #1:
- *			- Class: If spawned
- *			- SpawnID: If implements ISaveGameSpawnActor
- *			- SaveGame Properties
- *			- Data written by ISaveGameObject::OnSerialize
- *		- ...
- * - Destroyed Level Actors
- *		- Actor Name #1
- *		- ...
+ * - Persistent Level #1:
+ *   - Actors
+ *		  - Actor Name #1:
+ *			  - Class: If spawned
+ *			  - SpawnID: If implements ISaveGameSpawnActor
+ *			  - SaveGame Properties
+ *			  - Data written by ISaveGameObject::OnSerialize
+ *		  - ...
+ *   - Destroyed Level Actors
+ *		  - Actor Name #1
+ *		  - ...
+ *  - Streaming Levels
  * - Versions
  *		- Version:
  *			- ID
@@ -77,23 +77,24 @@ public:
       TArray<uint8> &StreamingLevelData);
 
 private:
-  static FString GetSaveName();
+  // static FString GetSaveName();
 
   void OnMapLoad(UWorld *World);
-  void OnStreamingLevelLoad(ULevel *Level, UWorld *World);
 
-  /** Serializes information about the archive, like Map Name, and position of
-   * versioning information */
+  /** Serializes information about the archive, like Engine Version or position
+   * of versioning information */
   void SerializeHeader();
 
+  /** Serializes the level's data into the structured archive */
   void SerializeLevel(const TSoftObjectPtr<ULevel> &Level);
 
+  /** Serializes the streaming level's data into the structured archive */
   void SerializeStreamingLevel(
       const TSoftObjectPtr<ULevelStreaming> &StreamingLevel);
 
 private:
   /**
-   * Serializes all of the actors that the SaveGameSubsystem is keeping track
+   * Serializes all the actors that the SaveGameSubsystem is keeping track
    * of. On load, it will also pre-spawn any actors and map any actors with
    * Spawn IDs before running the actual serialization step.
    */
@@ -115,7 +116,7 @@ private:
 
   /**
    * Serializes the actor's data into the structured archive.
-   * This data always comprises of the actor's object name, and optionally its:
+   * This data always comprises the actor's object name, and optionally its:
    * - Class: If the actor was spawned (so that it can be spawned again)
    * - SpawnID: If the actor implements ISaveGameSpawnActor. A unique identifier
    *to map the data back to an already spawned actor (like the player's
@@ -136,22 +137,28 @@ private:
       TFunction<void(const FString &, const FSoftClassPath &, const FGuid &,
                      FStructuredArchive::FSlot &)> &&BodyFunction);
 
-  void SerializeStreamingLevels();
-
-  // Helper functions
-  bool IsLevelNotLoaded(TWeakObjectPtr<ULevel> Level) const;
-
+  // Internal Variables
+private:
+  // The game instance subsystem that manages the Serialization
   const TWeakObjectPtr<USaveGameSubsystem> SaveGameSubsystem;
 
+  // The data that will be serialized
   TArray<uint8> Data = {};
 
+  // The archive that will be used to serialize the data
   FSaveGameMemoryArchive Archive;
+  // The proxy archive that will be an abstraction layer for the archive to
+  // resolve pointers
   TSaveGameProxyArchive<bIsLoading> ProxyArchive;
-
+  // The formatter that will be used to serialize the data (binary or JSON)
   FSaveGameFormatter Formatter;
+  // The structured archive that will be an abstraction layer for the proxy
+  // archive to allow for structured serialization
   FStructuredArchive StructuredArchive;
 
+  // The root slot of the structured archive
   FStructuredArchive::FSlot RootSlot;
+  // The root record of the structured archive
   FStructuredArchive::FRecord RootRecord;
 
   // Offsets

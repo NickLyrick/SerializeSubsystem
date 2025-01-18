@@ -1,6 +1,4 @@
-﻿// Copyright Alex Stevens (@MilkyEngineer). All Rights Reserved.
-
-#pragma once
+﻿#pragma once
 
 #include "SaveGameSerializer.h"
 
@@ -9,7 +7,6 @@
 #include "SaveGameSubsystem.h"
 #include "SaveGameVersion.h"
 
-#include "EngineUtils.h"
 #include "PlatformFeatures.h"
 #include "SaveGameSystem.h"
 
@@ -367,13 +364,9 @@ TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeStreamingLevelData(
 
   check(SaveGameSubsystem.IsValid());
 
-  bool bIsLevelLoaded = StreamingLevel->IsLevelLoaded();
-  bool bIsLevelVisible = StreamingLevel->IsLevelVisible();
-
-  RootRecord << SA_VALUE(TEXT("Loaded"), bIsLevelLoaded);
-  RootRecord << SA_VALUE(TEXT("Visible"), bIsLevelVisible);
-
-  if (bIsLevelLoaded)
+  // Double check that the level is loaded
+  // This is to ensure that the level is loaded before we serialize the actors
+  if (StreamingLevel->IsLevelLoaded())
     SerializeStreamingLevel(StreamingLevel);
 
   // Be sure to close this, as you'll be missing closed braces for JSON
@@ -417,35 +410,23 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::
     SerializeCompressedData<true>(CompressorArchive, Data);
   }
 
-  bool bIsLevelLoaded;
-  bool bIsLevelVisible;
-
-  RootRecord << SA_VALUE(TEXT("Loaded"), bIsLevelLoaded);
-  RootRecord << SA_VALUE(TEXT("Visible"), bIsLevelVisible);
-
-  StreamingLevel->SetShouldBeLoaded(bIsLevelLoaded);
-  StreamingLevel->SetShouldBeVisible(bIsLevelVisible);
-
-  if (bIsLevelLoaded) {
+  // Double check that the level is loaded
+  // This is to ensure that the level is loaded before we serialize the actors
+  if (StreamingLevel->IsLevelLoaded()) {
     SerializeStreamingLevel(StreamingLevel);
   }
-
-  if (bIsLevelLoaded) {
-    FWorldDelegates::LevelAddedToWorld.AddSP(
-        this, &TSaveGameSerializer::OnStreamingLevelLoad);
-  }
 }
 
-template <bool bIsLoading, bool bIsTextFormat>
-FString TSaveGameSerializer<bIsLoading, bIsTextFormat>::GetSaveName() {
-  FString SaveName = TEXT("SaveGame");
-
-  if (bIsTextFormat) {
-    SaveName += TEXT(".json");
-  }
-
-  return SaveName;
-}
+// template <bool bIsLoading, bool bIsTextFormat>
+// FString TSaveGameSerializer<bIsLoading, bIsTextFormat>::GetSaveName() {
+//   FString SaveName = TEXT("SaveGame");
+//
+//   if (bIsTextFormat) {
+//     SaveName += TEXT(".json");
+//   }
+//
+//   return SaveName;
+// }
 
 template <bool bIsLoading, bool bIsTextFormat>
 void TSaveGameSerializer<bIsLoading, bIsTextFormat>::OnMapLoad(UWorld *World) {
@@ -455,24 +436,6 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::OnMapLoad(UWorld *World) {
   SerializeLevel(World->GetCurrentLevel());
 
   SaveGameSubsystem->OnLoadCompleted();
-
-  TRACE_BOOKMARK(TEXT("End: LoadSaveGame[%s]"),
-                 bIsTextFormat ? TEXT("Text") : TEXT("Binary"));
-}
-
-template <bool bIsLoading, bool bIsTextFormat>
-void TSaveGameSerializer<bIsLoading, bIsTextFormat>::OnStreamingLevelLoad(
-    ULevel *Level, UWorld *World) {
-  FWorldDelegates::LevelAddedToWorld.RemoveAll(this);
-
-  check(SaveGameSubsystem->GetWorld() == World);
-
-  TSoftObjectPtr<ULevelStreaming> StreamingLevel =
-      SaveGameSubsystem->PersistentLevelRecord->FindStreamingLevel(Level);
-
-  if (StreamingLevel.IsValid()) {
-    SerializeStreamingLevel(StreamingLevel);
-  }
 
   TRACE_BOOKMARK(TEXT("End: LoadSaveGame[%s]"),
                  bIsTextFormat ? TEXT("Text") : TEXT("Binary"));
@@ -546,6 +509,7 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeStreamingLevel(
                         ->Actors->SaveGame,
                     ActorsSlot);
 
+    // TODO: implement this
     // FStructuredArchive::FSlot DestroyedActorsSlot =
     //     RootRecord.EnterField(TEXT("DestroyedActors"));
     // SerializeDestroyedActors(StreamingLevel->GetLoadedLevel(),
@@ -558,10 +522,8 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActors(
     ULevel *Level, TSet<TWeakObjectPtr<AActor>> &SaveGameActors,
     FStructuredArchive::FSlot &ActorsSlot) {
   QUICK_SCOPE_CYCLE_COUNTER(STAT_SaveGame_SerializeActors);
-
-  // This serialize method assumes that we don't have any streamed/sub levels
   check(SaveGameSubsystem.IsValid());
-
+  // TODO: This was important
   // const FTopLevelAssetPath LevelAssetPath(Level->GetPackage()->GetFName(),
   //                                         Level->GetOuter()->GetFName());
 
@@ -635,7 +597,8 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActors(
               }
             }
 
-            // if (SpawnID.IsValid()) {
+            // TODO: This was important (connected with the commented code
+            // below) if (SpawnID.IsValid()) {
             //   const FString ActorSubPath = LEVEL_SUBPATH_PREFIX + ActorName;
             //
             //   // We potentially have a spawned actor that other actors
@@ -863,68 +826,6 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActor(
       Archive.Seek(EndDataPosition);
     }
   }
-}
-
-template <bool bIsLoading, bool bIsTextFormat>
-void TSaveGameSerializer<bIsLoading,
-                         bIsTextFormat>::SerializeStreamingLevels() {
-  QUICK_SCOPE_CYCLE_COUNTER(STAT_SaveGame_SerializeStreamingLevels);
-
-  FArchiveFieldName StreamingLevelsFieldName(TEXT("StreamingLevels"));
-
-  check(SaveGameSubsystem.IsValid());
-  const UWorld *World = SaveGameSubsystem->GetWorld();
-  TArray<ULevelStreaming *> StreamingLevels = World->GetStreamingLevels();
-  int32 NumStreamingLevels = StreamingLevels.Num();
-
-  FStructuredArchive::FMap StreamingLevelsMap =
-      RootRecord.EnterMap(StreamingLevelsFieldName, NumStreamingLevels);
-
-  for (ULevelStreaming *StreamingLevel : StreamingLevels) {
-    if (!StreamingLevel)
-      continue;
-
-    FString LevelName = StreamingLevel->GetWorldAssetPackageName();
-    if (LevelName.IsEmpty()) {
-      LevelName = TEXT("UnnamedLevel");
-    }
-
-    bool bIsLevelLoaded = false;
-
-    if (!bIsLoading)
-      bIsLevelLoaded = StreamingLevel->IsLevelLoaded();
-
-    FStructuredArchive::FSlot StreamingLevelSlot =
-        StreamingLevelsMap.EnterElement(LevelName);
-    StreamingLevelSlot << bIsLevelLoaded;
-
-    if (bIsLoading) {
-      StreamingLevel->SetShouldBeLoaded(bIsLevelLoaded);
-      StreamingLevel->SetShouldBeVisible(bIsLevelLoaded);
-    }
-  }
-}
-
-template <bool bIsLoading, bool bIsTextFormat>
-bool TSaveGameSerializer<bIsLoading, bIsTextFormat>::IsLevelNotLoaded(
-    TWeakObjectPtr<ULevel> Level) const {
-  check(SaveGameSubsystem.IsValid());
-
-  const UWorld *World = SaveGameSubsystem->GetWorld();
-  if (!IsValid(World)) {
-    return false;
-  }
-
-  // Check if the StreamingLevel is loaded
-  for (const ULevelStreaming *StreamingLevel : World->GetStreamingLevels()) {
-    if (StreamingLevel->GetWorldAssetPackageName() ==
-        Level->GetOutermost()->GetFName()) {
-      return !StreamingLevel->IsLevelLoaded();
-    }
-  }
-
-  // Check if it is a persistent level
-  return false;
 }
 
 // Instantiate the permutations of TSaveGameSerializer
