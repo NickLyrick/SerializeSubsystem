@@ -1,0 +1,94 @@
+# UE5 MACROSES
+StatementMacros: ['UPROPERTY', 'UFUNCTION', 'UCLASS', 'USTRUCT', 'UENUM', 'UINTERFACE', 'GENERATED_BODY']
+
+# Language and Standart
+Language: Cpp
+Standard: Auto
+BasedOnStyle: Google
+
+# Code style
+UseTab: Never
+PointerAlignment: Left
+IndentWidth: '2'
+TabWidth: '2'
+MaxEmptyLinesToKeep: '1'
+ColumnLimit: '140'
+ContinuationIndentWidth: '2'
+
+# Alignings
+AlignAfterOpenBracket: Align
+AlignConsecutiveMacros: 'true'
+AlignConsecutiveAssignments: 'true'
+AlignConsecutiveDeclarations: 'false'
+AlignEscapedNewlines: Left
+AlignOperands: 'true'
+
+# Permisions
+AllowAllArgumentsOnNextLine: 'false'
+AllowAllConstructorInitializersOnNextLine: 'true'
+AllowAllParametersOfDeclarationOnNextLine: 'false'
+AllowShortBlocksOnASingleLine: 'true'
+AllowShortCaseLabelsOnASingleLine: 'true'
+AllowShortFunctionsOnASingleLine: All
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLambdasOnASingleLine: All
+AllowShortLoopsOnASingleLine: 'true'
+
+# Breaks
+AlwaysBreakAfterDefinitionReturnType: None
+AlwaysBreakAfterReturnType: None
+AlwaysBreakBeforeMultilineStrings: 'false'
+AlwaysBreakTemplateDeclarations: 'No'
+BreakBeforeBinaryOperators: All
+BreakBeforeBraces: Attach
+BreakBeforeTernaryOperators: 'true'
+BreakConstructorInitializers: AfterColon
+
+# namespaces
+CompactNamespaces: 'false'
+FixNamespaceComments: 'true'
+NamespaceIndentation: All
+
+# classes
+BreakInheritanceList: AfterColon
+SpaceBeforeCtorInitializerColon: 'true'
+SpaceBeforeInheritanceColon: 'true'
+Cpp11BracedListStyle: 'false'
+AccessModifierOffset: '-2'
+
+IndentCaseLabels: 'true'
+IndentPPDirectives: AfterHash
+KeepEmptyLinesAtTheStartOfBlocks: 'false'
+
+# comments
+ReflowComments: 'true'
+AlignTrailingComments: 'true'
+SpacesBeforeTrailingComments: '4'
+
+SpaceAfterCStyleCast: 'false'
+SpaceAfterLogicalNot: 'false'
+SpaceAfterTemplateKeyword: 'false'
+SpaceBeforeAssignmentOperators: 'true'
+SpaceBeforeCpp11BracedList: 'false'
+SpaceBeforeRangeBasedForLoopColon: 'false'
+SpacesInAngles: 'false'
+SpacesInCStyleCastParentheses: 'false'
+SpacesInParentheses: 'false'
+SpacesInSquareBrackets: 'false'
+
+# sort includes
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex:           '["<](gtest|gmock)/*'
+    Priority:        1
+  - Regex:           '^<[[:alnum:]_]+>'
+    Priority:        2
+  - Regex:           '^<.+>'
+    Priority:        3
+  - Regex:           '.*'
+    Priority:        4
+IncludeIsMainRegex: '(_test)?$'
+SortIncludes: CaseSensitive
+
+# sort using
+SortUsingDeclarations: 'true'
