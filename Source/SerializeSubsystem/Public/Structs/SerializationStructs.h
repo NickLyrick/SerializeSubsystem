@@ -1,5 +1,9 @@
 #pragma once
 
+#include "Engine/Level.h"
+#include "Engine/LevelStreaming.h"
+#include "UObject/SoftObjectPtr.h"
+
 #include "SerializationStructs.generated.h"
 
 // Struct to hold data for a single streaming level.
