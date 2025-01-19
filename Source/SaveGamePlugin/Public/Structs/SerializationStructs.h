@@ -7,13 +7,14 @@ USTRUCT(BlueprintType, Blueprintable)
 struct FStreamingLevelData {
   GENERATED_BODY()
 
-  UPROPERTY(BlueprintReadOnly)
+  UPROPERTY(BlueprintReadOnly, Category = "Serialization Data")
   bool bIsLoaded = false;
 
-  UPROPERTY(BlueprintReadOnly)
+  UPROPERTY(BlueprintReadOnly, Category = "Serialization Data")
   bool bIsVisible = false;
 
-  UPROPERTY(BlueprintReadWrite, meta = (HideInDetailPanel))
+  UPROPERTY(BlueprintReadWrite, meta = (HideInDetailPanel),
+            Category = "Serialization Data")
   TArray<uint8> Data = {};
 
   void SaveStreamingLevelState(
@@ -34,10 +35,11 @@ USTRUCT(BlueprintType, Blueprintable)
 struct FLevelData {
   GENERATED_BODY()
 
-  UPROPERTY(BlueprintReadWrite, meta = (HideInDetailPanel))
+  UPROPERTY(BlueprintReadWrite, meta = (HideInDetailPanel),
+            Category = "Serialization Data")
   TArray<uint8> Data = {};
 
-  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Serialization Data")
   TMap<TSoftObjectPtr<ULevelStreaming>, FStreamingLevelData> StreamingLevels =
       {};
 };
@@ -47,12 +49,13 @@ USTRUCT(BlueprintType, Blueprintable)
 struct FSerializedData {
   GENERATED_BODY()
 
-  UPROPERTY(BlueprintReadWrite, meta = (HideInDetailPanel))
+  UPROPERTY(BlueprintReadWrite, meta = (HideInDetailPanel),
+            Category = "Serialization Data")
   TArray<uint8> Header = {};
 
-  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Serialization Data")
   TSoftObjectPtr<ULevel> CurrentLevel;
 
-  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Serialization Data")
   TMap<TSoftObjectPtr<ULevel>, FLevelData> Levels = {};
 };

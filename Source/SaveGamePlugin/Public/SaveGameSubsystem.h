@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "GameFramework/Actor.h"
 #include "Structs/SaveGameSturct.h"
 #include "Structs/SerializationStructs.h"
 #include "Subsystems/GameInstanceSubsystem.h"

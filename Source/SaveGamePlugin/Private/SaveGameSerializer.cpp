@@ -2,6 +2,11 @@
 
 #include "SaveGameSerializer.h"
 
+#include "Engine/Level.h"
+#include "Misc/EngineVersion.h"
+#include "Serialization/CustomVersion.h"
+#include "UObject/Package.h"
+
 #include "SaveGameFunctionLibrary.h"
 #include "SaveGameObject.h"
 #include "SaveGameSubsystem.h"
@@ -230,8 +235,6 @@ TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeHeaderData() {
                    bIsTextFormat ? TEXT("Text") : TEXT("Binary"));
   };
 
-  TSaveGameSerializer<false, true> TextSerializer(SaveGameSubsystem.Get());
-
   check(SaveGameSubsystem.IsValid());
 
   SerializeHeader();
@@ -257,8 +260,8 @@ TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeHeaderData() {
 
   return Data;
 }
-template <bool bIsLoading, bool bIsTextFormat>
 
+template <bool bIsLoading, bool bIsTextFormat>
 void TSaveGameSerializer<bIsLoading, bIsTextFormat>::DeserializeHeaderData(
     TArray<uint8> &HeaderData) {
   check(bIsLoading && !bIsTextFormat);

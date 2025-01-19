@@ -1,8 +1,9 @@
-﻿// Copyright Alex Stevens (@MilkyEngineer). All Rights Reserved.
-
-#pragma once
+﻿#pragma once
 
 #include "Serialization/NameAsStringProxyArchive.h"
+#include "UObject/SoftObjectPath.h"
+#include "UObject/SoftObjectPtr.h"
+#include "UObject/WeakObjectPtr.h"
 
 /**
  * A proxy archive that ensures that all object reference types are stored as a

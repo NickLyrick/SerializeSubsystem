@@ -1,6 +1,5 @@
-// Copyright Alex Stevens (@MilkyEngineer). All Rights Reserved.
-
 #include "SaveGameObject.h"
+#include "Misc/ScopeExit.h"
 
 FSaveGameArchive::FSaveGameArchive(FStructuredArchive::FRecord &InRecord,
                                    UObject *InObject)

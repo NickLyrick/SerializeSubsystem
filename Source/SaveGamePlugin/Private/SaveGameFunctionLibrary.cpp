@@ -1,8 +1,7 @@
-// Copyright Alex Stevens (@MilkyEngineer). All Rights Reserved.
-
 #include "SaveGameFunctionLibrary.h"
 
 #include "SaveGameSettings.h"
+#include "Serialization/CustomVersion.h"
 
 #if WITH_EDITOR
 #include "Blueprint/BlueprintExceptionInfo.h"

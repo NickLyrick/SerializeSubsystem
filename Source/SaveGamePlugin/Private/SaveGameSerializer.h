@@ -1,12 +1,21 @@
 ﻿#pragma once
 
+#include "Misc/Build.h"
+
 #if WITH_TEXT_ARCHIVE_SUPPORT
 #include "Serialization/Formatters/JsonArchiveOutputFormatter.h"
 #endif
 
 #include "Components/ActorComponent.h"
+#include "Engine/Level.h"
+#include "Engine/LevelStreaming.h"
 #include "SaveGameProxyArchive.h"
+#include "Serialization/MemoryReader.h"
+#include "Serialization/MemoryWriter.h"
 #include "Templates/ChooseClass.h"
+#include "UObject/SoftObjectPath.h"
+#include "UObject/SoftObjectPtr.h"
+#include "UObject/WeakObjectPtr.h"
 
 class USaveGameSubsystem;
 
