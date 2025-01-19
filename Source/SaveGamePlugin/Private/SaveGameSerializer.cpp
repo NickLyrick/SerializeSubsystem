@@ -509,11 +509,11 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeStreamingLevel(
                         ->Actors->SaveGame,
                     ActorsSlot);
 
-    // TODO: implement this
-    // FStructuredArchive::FSlot DestroyedActorsSlot =
-    //     RootRecord.EnterField(TEXT("DestroyedActors"));
-    // SerializeDestroyedActors(StreamingLevel->GetLoadedLevel(),
-    //                          DestroyedActorsSlot);
+    // TODO: Ensure that is working
+    FStructuredArchive::FSlot DestroyedActorsSlot =
+        RootRecord.EnterField(TEXT("DestroyedActors"));
+    SerializeDestroyedActors(StreamingLevel->GetLoadedLevel(),
+                             DestroyedActorsSlot);
   }
 }
 
@@ -523,9 +523,6 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActors(
     FStructuredArchive::FSlot &ActorsSlot) {
   QUICK_SCOPE_CYCLE_COUNTER(STAT_SaveGame_SerializeActors);
   check(SaveGameSubsystem.IsValid());
-  // TODO: This was important
-  // const FTopLevelAssetPath LevelAssetPath(Level->GetPackage()->GetFName(),
-  //                                         Level->GetOuter()->GetFName());
 
   UWorld *World = SaveGameSubsystem->GetWorld();
   if (!IsValid(World))
@@ -597,19 +594,20 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActors(
               }
             }
 
-            // TODO: This was important (connected with the commented code
-            // below) if (SpawnID.IsValid()) {
-            //   const FString ActorSubPath = LEVEL_SUBPATH_PREFIX + ActorName;
-            //
-            //   // We potentially have a spawned actor that other actors
-            //   // reference
-            //   // If the name has changed, be sure to redirect the old actor
-            //   // path
-            //   // to the new one
-            //   ProxyArchive.AddRedirect(
-            //       FSoftObjectPath(LevelAssetPath, ActorSubPath),
-            //       FSoftObjectPath(Actor));
-            // }
+            // TODO: Ensure that is working
+            if (SpawnID.IsValid()) {
+              const FTopLevelAssetPath LevelAssetPath(
+                  Level->GetPackage()->GetFName(),
+                  Level->GetOuter()->GetFName());
+              const FString ActorSubPath = LEVEL_SUBPATH_PREFIX + ActorName;
+
+              // We potentially have a spawned actor that other actors reference
+              // If the name has changed, be sure to redirect the old actor path
+              // to the new one
+              ProxyArchive.AddRedirect(
+                  FSoftObjectPath(LevelAssetPath, ActorSubPath),
+                  FSoftObjectPath(Actor));
+            }
 
             check(IsValid(Actor));
           });
@@ -649,6 +647,9 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActors(
             Actor->SerializeScriptProperties(
                 ActorSlot.EnterAttribute(TEXT("Properties")));
 
+            // Serialize Actor Components
+            SerializeActorComponents(Actor, ActorSlot);
+
             FStructuredArchive::FSlot CustomDataSlot =
                 ActorSlot.EnterAttribute(TEXT("Data"));
             FStructuredArchive::FRecord CustomDataRecord =
@@ -664,12 +665,37 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActors(
   }
 }
 
+// Serialize the actor's components
+template <bool bIsLoading, bool bIsTextFormat>
+void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActorComponents(
+    AActor *&Actor, FStructuredArchive::FSlot &ActorSlot) {
+  if (!Actor)
+    return;
+
+  TArray<UActorComponent *> Components =
+      Actor->GetComponentsByInterface(USaveGameObject::StaticClass());
+
+  if (Components.IsEmpty())
+    return;
+
+  int32 NumComponents = Components.Num();
+
+  FStructuredArchive::FSlot ActorComponentsSlot =
+      ActorSlot.EnterAttribute(TEXT("Components"));
+  FStructuredArchive::FMap ComponentsMap =
+      ActorComponentsSlot.EnterMap(NumComponents);
+
+  for (TSoftObjectPtr<UActorComponent> ActorComponent : Components) {
+    if (ActorComponent.IsValid()) {
+      SerializeActorComponent(ComponentsMap, ActorComponent);
+    }
+  }
+}
+
 template <bool bIsLoading, bool bIsTextFormat>
 void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeDestroyedActors(
     ULevel *Level, FStructuredArchive::FSlot &DestroyedActorsSlot) {
   QUICK_SCOPE_CYCLE_COUNTER(STAT_SaveGame_SerializeDestroyedActors);
-  check(SaveGameSubsystem.IsValid());
-
   check(SaveGameSubsystem.IsValid());
   check(IsValid(Level));
 
@@ -826,6 +852,35 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActor(
       Archive.Seek(EndDataPosition);
     }
   }
+}
+
+template <bool bIsLoading, bool bIsTextFormat>
+void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActorComponent(
+    FStructuredArchive::FMap &ComponentsMap,
+    TSoftObjectPtr<UActorComponent> &ActorComponent) {
+  QUICK_SCOPE_CYCLE_COUNTER(STAT_SaveGame_SerializeActorComponent);
+
+  FString ActorComponentName;
+
+  if (!bIsLoading) {
+    ActorComponentName = ActorComponent->GetName();
+  }
+
+  FStructuredArchive::FSlot ActorComponentSlot =
+      ComponentsMap.EnterElement(ActorComponentName);
+
+  ActorComponent->SerializeScriptProperties(
+      ActorComponentSlot.EnterAttribute(TEXT("Properties")));
+
+  FStructuredArchive::FSlot CustomDataSlot =
+      ActorComponentSlot.EnterAttribute(TEXT("Data"));
+  FStructuredArchive::FRecord CustomDataRecord = CustomDataSlot.EnterRecord();
+
+  // Encapsulate the record in something a Blueprint can access
+  FSaveGameArchive SaveGameArchive(CustomDataRecord, ActorComponent.Get());
+
+  ISaveGameObject::Execute_OnSerialize(ActorComponent.Get(), SaveGameArchive,
+                                       bIsLoading);
 }
 
 // Instantiate the permutations of TSaveGameSerializer

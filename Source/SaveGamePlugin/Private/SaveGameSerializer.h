@@ -4,6 +4,7 @@
 #include "Serialization/Formatters/JsonArchiveOutputFormatter.h"
 #endif
 
+#include "Components/ActorComponent.h"
 #include "SaveGameProxyArchive.h"
 #include "Templates/ChooseClass.h"
 
@@ -102,6 +103,13 @@ private:
                        TSet<TWeakObjectPtr<AActor>> &SaveGameActors,
                        FStructuredArchive::FSlot &ActorsSlot);
 
+  /**
+   * Serializes all the actor components that implements interface
+   * SaveGameObject.
+   */
+  void SerializeActorComponents(AActor *&Actor,
+                                FStructuredArchive::FSlot &ActorSlot);
+
   /** Serializes any destroyed level actors. On load, level actors will exist
    * again, so this will re-destroy them */
   void SerializeDestroyedActors(ULevel *Level,
@@ -136,6 +144,17 @@ private:
       FStructuredArchive::FMap &ActorMap, AActor *&Actor,
       TFunction<void(const FString &, const FSoftClassPath &, const FGuid &,
                      FStructuredArchive::FSlot &)> &&BodyFunction);
+
+  /**
+   * Serializes the actor component data into the structured archive.
+   * This data always comprises the actor's component object name and its data.
+   *
+   * @param ComponentsMap The structured map that the actor component data will
+   *be written to
+   * @param ActorComponent The live actor components that will be serialized
+   */
+  void SerializeActorComponent(FStructuredArchive::FMap &ComponentsMap,
+                               TSoftObjectPtr<UActorComponent> &ActorComponent);
 
   // Internal Variables
 private:
