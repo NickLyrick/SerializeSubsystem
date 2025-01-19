@@ -509,11 +509,11 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeStreamingLevel(
                         ->Actors->SaveGame,
                     ActorsSlot);
 
-    // TODO: implement this
-    // FStructuredArchive::FSlot DestroyedActorsSlot =
-    //     RootRecord.EnterField(TEXT("DestroyedActors"));
-    // SerializeDestroyedActors(StreamingLevel->GetLoadedLevel(),
-    //                          DestroyedActorsSlot);
+    // TODO: Ensure that is working
+    FStructuredArchive::FSlot DestroyedActorsSlot =
+        RootRecord.EnterField(TEXT("DestroyedActors"));
+    SerializeDestroyedActors(StreamingLevel->GetLoadedLevel(),
+                             DestroyedActorsSlot);
   }
 }
 
@@ -523,9 +523,6 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActors(
     FStructuredArchive::FSlot &ActorsSlot) {
   QUICK_SCOPE_CYCLE_COUNTER(STAT_SaveGame_SerializeActors);
   check(SaveGameSubsystem.IsValid());
-  // TODO: This was important
-  // const FTopLevelAssetPath LevelAssetPath(Level->GetPackage()->GetFName(),
-  //                                         Level->GetOuter()->GetFName());
 
   UWorld *World = SaveGameSubsystem->GetWorld();
   if (!IsValid(World))
@@ -597,19 +594,20 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActors(
               }
             }
 
-            // TODO: This was important (connected with the commented code
-            // below) if (SpawnID.IsValid()) {
-            //   const FString ActorSubPath = LEVEL_SUBPATH_PREFIX + ActorName;
-            //
-            //   // We potentially have a spawned actor that other actors
-            //   // reference
-            //   // If the name has changed, be sure to redirect the old actor
-            //   // path
-            //   // to the new one
-            //   ProxyArchive.AddRedirect(
-            //       FSoftObjectPath(LevelAssetPath, ActorSubPath),
-            //       FSoftObjectPath(Actor));
-            // }
+            // TODO: Ensure that is working
+            if (SpawnID.IsValid()) {
+              const FTopLevelAssetPath LevelAssetPath(
+                  Level->GetPackage()->GetFName(),
+                  Level->GetOuter()->GetFName());
+              const FString ActorSubPath = LEVEL_SUBPATH_PREFIX + ActorName;
+
+              // We potentially have a spawned actor that other actors reference
+              // If the name has changed, be sure to redirect the old actor path
+              // to the new one
+              ProxyArchive.AddRedirect(
+                  FSoftObjectPath(LevelAssetPath, ActorSubPath),
+                  FSoftObjectPath(Actor));
+            }
 
             check(IsValid(Actor));
           });
