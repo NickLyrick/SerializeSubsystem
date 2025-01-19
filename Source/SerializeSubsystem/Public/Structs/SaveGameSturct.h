@@ -1,5 +1,12 @@
 #pragma once
 
+#include "Engine/Level.h"
+#include "Engine/LevelStreaming.h"
+#include "Engine/World.h"
+#include "GameFramework/Actor.h"
+#include "Misc/PackageName.h"
+#include "UObject/Package.h"
+
 // Struct to hold data for a single streaming level.
 struct FActorsStruct {
   TSet<TWeakObjectPtr<AActor>> SaveGame = {};

@@ -2,10 +2,15 @@
 
 #include "SaveGameSerializer.h"
 
+#include "Engine/Level.h"
+#include "Misc/EngineVersion.h"
+#include "Serialization/CustomVersion.h"
+#include "UObject/Package.h"
+
 #include "SaveGameFunctionLibrary.h"
 #include "SaveGameObject.h"
-#include "SaveGameSubsystem.h"
 #include "SaveGameVersion.h"
+#include "SerializeSubsystem.h"
 
 #include "PlatformFeatures.h"
 #include "SaveGameSystem.h"
@@ -60,10 +65,10 @@ FORCEINLINE_DEBUGGABLE void SerializeCompressedData(FArchive &Ar,
 // binary (false).
 template <bool bIsLoading, bool bIsTextFormat>
 TSaveGameSerializer<bIsLoading, bIsTextFormat>::TSaveGameSerializer(
-    USaveGameSubsystem *InSaveGameSubsystem)
-    : SaveGameSubsystem(InSaveGameSubsystem), // Assign the input
-                                              // save game subsystem to the
-                                              // member variable.
+    USerializeSubsystem *InSerializeSubsystem)
+    : SerializeSubsystem(InSerializeSubsystem), // Assign the input
+                                                // save game subsystem to the
+                                                // member variable.
       Archive(Data),         // Initialize the archive with the raw data array.
       ProxyArchive(Archive), // Create a proxy archive for additional handling.
       Formatter(ProxyArchive), // Use the proxy archive to set up the formatter.
@@ -100,7 +105,7 @@ TSaveGameSerializer<bIsLoading, bIsTextFormat>::TSaveGameSerializer(
 //                    bIsTextFormat ? TEXT("Text") : TEXT("Binary"));
 //   };
 //
-//   check(SaveGameSubsystem.IsValid());
+//   check(SerializeSubsystem.IsValid());
 //
 //   // SerializeHeader();
 //   // SerializeLevels();
@@ -168,8 +173,8 @@ TSaveGameSerializer<bIsLoading, bIsTextFormat>::TSaveGameSerializer(
 //     return false;
 //   }
 //
-//   check(SaveGameSubsystem.IsValid());
-//   UWorld *World = SaveGameSubsystem->GetWorld();
+//   check(SerializeSubsystem.IsValid());
+//   UWorld *World = SerializeSubsystem->GetWorld();
 //
 //   if (World->IsInSeamlessTravel()) {
 //     return false;
@@ -230,9 +235,7 @@ TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeHeaderData() {
                    bIsTextFormat ? TEXT("Text") : TEXT("Binary"));
   };
 
-  TSaveGameSerializer<false, true> TextSerializer(SaveGameSubsystem.Get());
-
-  check(SaveGameSubsystem.IsValid());
+  check(SerializeSubsystem.IsValid());
 
   SerializeHeader();
 
@@ -257,8 +260,8 @@ TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeHeaderData() {
 
   return Data;
 }
-template <bool bIsLoading, bool bIsTextFormat>
 
+template <bool bIsLoading, bool bIsTextFormat>
 void TSaveGameSerializer<bIsLoading, bIsTextFormat>::DeserializeHeaderData(
     TArray<uint8> &HeaderData) {
   check(bIsLoading && !bIsTextFormat);
@@ -289,7 +292,7 @@ TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeLevelData(
                    bIsTextFormat ? TEXT("Text") : TEXT("Binary"));
   };
 
-  check(SaveGameSubsystem.IsValid());
+  check(SerializeSubsystem.IsValid());
 
   SerializeLevel(Level);
 
@@ -334,8 +337,8 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::DeserializeLevelData(
     return;
   }
 
-  check(SaveGameSubsystem.IsValid());
-  UWorld *World = SaveGameSubsystem->GetWorld();
+  check(SerializeSubsystem.IsValid());
+  UWorld *World = SerializeSubsystem->GetWorld();
 
   if (World->IsInSeamlessTravel()) {
     return;
@@ -362,7 +365,7 @@ TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeStreamingLevelData(
                    bIsTextFormat ? TEXT("Text") : TEXT("Binary"));
   };
 
-  check(SaveGameSubsystem.IsValid());
+  check(SerializeSubsystem.IsValid());
 
   // Double check that the level is loaded
   // This is to ensure that the level is loaded before we serialize the actors
@@ -431,11 +434,11 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::
 template <bool bIsLoading, bool bIsTextFormat>
 void TSaveGameSerializer<bIsLoading, bIsTextFormat>::OnMapLoad(UWorld *World) {
   FCoreUObjectDelegates::PostLoadMapWithWorld.RemoveAll(this);
-  check(SaveGameSubsystem->GetWorld() == World);
+  check(SerializeSubsystem->GetWorld() == World);
 
   SerializeLevel(World->GetCurrentLevel());
 
-  SaveGameSubsystem->OnLoadCompleted();
+  SerializeSubsystem->OnLoadCompleted();
 
   TRACE_BOOKMARK(TEXT("End: LoadSaveGame[%s]"),
                  bIsTextFormat ? TEXT("Text") : TEXT("Binary"));
@@ -485,7 +488,7 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeLevel(
         RootRecord.EnterField(TEXT("Actors"));
 
     SerializeActors(Level.Get(),
-                    SaveGameSubsystem->PersistentLevelRecord->Actors->SaveGame,
+                    SerializeSubsystem->PersistentLevelRecord->Actors->SaveGame,
                     ActorsSlot);
 
     FStructuredArchive::FSlot DestroyedActorsSlot =
@@ -504,7 +507,7 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeStreamingLevel(
         RootRecord.EnterField(TEXT("Actors"));
 
     SerializeActors(StreamingLevel->GetLoadedLevel(),
-                    SaveGameSubsystem->PersistentLevelRecord
+                    SerializeSubsystem->PersistentLevelRecord
                         ->StreamingLevels[StreamingLevel]
                         ->Actors->SaveGame,
                     ActorsSlot);
@@ -522,9 +525,9 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActors(
     ULevel *Level, TSet<TWeakObjectPtr<AActor>> &SaveGameActors,
     FStructuredArchive::FSlot &ActorsSlot) {
   QUICK_SCOPE_CYCLE_COUNTER(STAT_SaveGame_SerializeActors);
-  check(SaveGameSubsystem.IsValid());
+  check(SerializeSubsystem.IsValid());
 
-  UWorld *World = SaveGameSubsystem->GetWorld();
+  UWorld *World = SerializeSubsystem->GetWorld();
   if (!IsValid(World))
     return;
 
@@ -696,11 +699,11 @@ template <bool bIsLoading, bool bIsTextFormat>
 void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeDestroyedActors(
     ULevel *Level, FStructuredArchive::FSlot &DestroyedActorsSlot) {
   QUICK_SCOPE_CYCLE_COUNTER(STAT_SaveGame_SerializeDestroyedActors);
-  check(SaveGameSubsystem.IsValid());
+  check(SerializeSubsystem.IsValid());
   check(IsValid(Level));
 
   const TSharedPtr<FLevelStruct> LevelRecord =
-      SaveGameSubsystem->PersistentLevelRecord;
+      SerializeSubsystem->PersistentLevelRecord;
 
   int32 NumDestroyedActors;
 

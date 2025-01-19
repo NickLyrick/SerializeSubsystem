@@ -1,13 +1,11 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
-
 using UnrealBuildTool;
 
-public class SaveGamePlugin : ModuleRules
+public class SerializeSubsystem : ModuleRules
 {
-	public SaveGamePlugin(ReadOnlyTargetRules Target) : base(Target)
+	public SerializeSubsystem(ReadOnlyTargetRules Target) : base(Target)
 	{
-		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
-		
+		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
+
 		PublicDependencyModuleNames.AddRange(new string[]
 		{
 			"Core",
@@ -17,10 +15,9 @@ public class SaveGamePlugin : ModuleRules
 		{
 			"CoreUObject",
 			"Engine",
-			"DeveloperSettings",
-			"Json"
+			"DeveloperSettings"
 		});
-		
+
 		if (Target.Type == TargetType.Editor)
 		{
 			PrivateDependencyModuleNames.AddRange(new string[]

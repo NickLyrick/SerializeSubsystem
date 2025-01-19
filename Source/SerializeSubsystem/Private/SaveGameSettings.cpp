@@ -1,6 +1,4 @@
-﻿// Copyright Alex Stevens (@MilkyEngineer). All Rights Reserved.
-
-#include "SaveGameSettings.h"
+﻿#include "SaveGameSettings.h"
 
 FGuid USaveGameSettings::GetVersionId(const UEnum *VersionEnum) const {
   if (CachedVersions.IsEmpty()) {

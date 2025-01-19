@@ -1,14 +1,23 @@
 ﻿#pragma once
 
+#include "Misc/Build.h"
+
 #if WITH_TEXT_ARCHIVE_SUPPORT
 #include "Serialization/Formatters/JsonArchiveOutputFormatter.h"
 #endif
 
 #include "Components/ActorComponent.h"
+#include "Engine/Level.h"
+#include "Engine/LevelStreaming.h"
 #include "SaveGameProxyArchive.h"
+#include "Serialization/MemoryReader.h"
+#include "Serialization/MemoryWriter.h"
 #include "Templates/ChooseClass.h"
+#include "UObject/SoftObjectPath.h"
+#include "UObject/SoftObjectPtr.h"
+#include "UObject/WeakObjectPtr.h"
 
-class USaveGameSubsystem;
+class USerializeSubsystem;
 
 class FSaveGameSerializer : public TSharedFromThis<FSaveGameSerializer> {
 public:
@@ -59,7 +68,7 @@ class TSaveGameSerializer final : public FSaveGameSerializer {
       FBinaryArchiveFormatter>::Result;
 
 public:
-  explicit TSaveGameSerializer(USaveGameSubsystem *InSaveGameSubsystem);
+  explicit TSaveGameSerializer(USerializeSubsystem *InSerializeSubsystem);
 
   // FSerializedData SerializeData();
   // bool DeserializeData(FSerializedData &RawData);
@@ -95,7 +104,7 @@ private:
 
 private:
   /**
-   * Serializes all the actors that the SaveGameSubsystem is keeping track
+   * Serializes all the actors that the SerializeSubsystem is keeping track
    * of. On load, it will also pre-spawn any actors and map any actors with
    * Spawn IDs before running the actual serialization step.
    */
@@ -159,7 +168,7 @@ private:
   // Internal Variables
 private:
   // The game instance subsystem that manages the Serialization
-  const TWeakObjectPtr<USaveGameSubsystem> SaveGameSubsystem;
+  const TWeakObjectPtr<USerializeSubsystem> SerializeSubsystem;
 
   // The data that will be serialized
   TArray<uint8> Data = {};

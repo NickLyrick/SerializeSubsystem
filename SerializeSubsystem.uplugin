@@ -2,11 +2,11 @@
 	"FileVersion": 3,
 	"Version": 1,
 	"VersionName": "0.1",
-	"FriendlyName": "SaveGamePlugin",
+	"FriendlyName": "Serialize Subsystem",
 	"Description": "",
-	"Category": "Programming",
-	"CreatedBy": "Alex Stevens",
-	"CreatedByURL": "http://milky.engineer/",
+	"Category": "Serialization",
+	"CreatedBy": "",
+	"CreatedByURL": "",
 	"DocsURL": "",
 	"MarketplaceURL": "",
 	"SupportURL": "",
@@ -16,7 +16,7 @@
 	"Installed": false,
 	"Modules": [
 		{
-			"Name": "SaveGamePlugin",
+			"Name": "SerializeSubsystem",
 			"Type": "Runtime",
 			"LoadingPhase": "PreLoadingScreen"
 		}
