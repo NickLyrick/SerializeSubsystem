@@ -20,7 +20,7 @@
  * CoreRedirects and redirected if needed.
  */
 USTRUCT(BlueprintType, BlueprintInternalUseOnly)
-struct SAVEGAMEPLUGIN_API FSaveGameArchive {
+struct SERIALIZESUBSYSTEM_API FSaveGameArchive {
   GENERATED_BODY()
 
 public:
@@ -102,7 +102,7 @@ class USaveGameObject : public UInterface {
 /**
  * If an object implements this interface, it should be saved.
  */
-class SAVEGAMEPLUGIN_API ISaveGameObject {
+class SERIALIZESUBSYSTEM_API ISaveGameObject {
   GENERATED_BODY()
 
 public:
@@ -136,7 +136,7 @@ class USaveGameSpawnActor : public UInterface {
  * already spawned character's SpawnID, matches it with the data's SpawnID, and
  * then serializes that data to the character.
  */
-class SAVEGAMEPLUGIN_API ISaveGameSpawnActor {
+class SERIALIZESUBSYSTEM_API ISaveGameSpawnActor {
   GENERATED_BODY()
 
 public:

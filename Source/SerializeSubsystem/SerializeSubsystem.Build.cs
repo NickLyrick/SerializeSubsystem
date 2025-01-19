@@ -1,8 +1,8 @@
 using UnrealBuildTool;
 
-public class SaveGamePlugin : ModuleRules
+public class SerializeSubsystem : ModuleRules
 {
-	public SaveGamePlugin(ReadOnlyTargetRules Target) : base(Target)
+	public SerializeSubsystem(ReadOnlyTargetRules Target) : base(Target)
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 

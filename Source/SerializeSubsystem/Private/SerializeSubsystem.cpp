@@ -1,4 +1,4 @@
-#include "SaveGameSubsystem.h"
+#include "SerializeSubsystem.h"
 
 #include "SaveGameFunctionLibrary.h"
 #include "SaveGameObject.h"
@@ -6,7 +6,7 @@
 
 #include "EngineUtils.h"
 
-void USaveGameSubsystem::Initialize(FSubsystemCollectionBase &Collection) {
+void USerializeSubsystem::Initialize(FSubsystemCollectionBase &Collection) {
   // Persistent Levels
   FWorldDelegates::OnPostWorldInitialization.AddUObject(
       this, &ThisClass::OnWorldInitialized);
@@ -23,7 +23,7 @@ void USaveGameSubsystem::Initialize(FSubsystemCollectionBase &Collection) {
   OnWorldInitialized(GetWorld(), UWorld::InitializationValues());
 }
 
-void USaveGameSubsystem::Deinitialize() {
+void USerializeSubsystem::Deinitialize() {
   FWorldDelegates::OnPostWorldInitialization.RemoveAll(this);
   FWorldDelegates::OnWorldInitializedActors.RemoveAll(this);
   FWorldDelegates::OnWorldCleanup.RemoveAll(this);
@@ -32,7 +32,7 @@ void USaveGameSubsystem::Deinitialize() {
   FWorldDelegates::PreLevelRemovedFromWorld.RemoveAll(this);
 }
 
-void USaveGameSubsystem::Save(FSerializedData &Data) {
+void USerializeSubsystem::Save(FSerializedData &Data) {
   const TSoftObjectPtr<ULevel> Level = GetWorld()->GetCurrentLevel();
 
   { // Serialize Header Data
@@ -71,7 +71,7 @@ void USaveGameSubsystem::Save(FSerializedData &Data) {
   Data = *SerializedData;
 }
 
-void USaveGameSubsystem::Load(FSerializedData Data) {
+void USerializeSubsystem::Load(FSerializedData Data) {
   *SerializedData = Data;
 
   {
@@ -99,12 +99,12 @@ void USaveGameSubsystem::Load(FSerializedData Data) {
   // called after the persistent level will be loaded
 }
 
-bool USaveGameSubsystem::IsLoadingSaveGame() const {
+bool USerializeSubsystem::IsLoadingSaveGame() const {
   return CurrentSerializer.IsValid();
 }
 
 // Used to serialize the streaming levels data
-void USaveGameSubsystem::SaveStreamingLevels() {
+void USerializeSubsystem::SaveStreamingLevels() {
   SerializedData->CurrentLevel = GetWorld()->GetCurrentLevel();
 
   // Serialize Streaming Levels Data
@@ -136,7 +136,7 @@ void USaveGameSubsystem::SaveStreamingLevels() {
 }
 
 // Used to deserialize the streaming levels data
-void USaveGameSubsystem::LoadStreamingLevels() {
+void USerializeSubsystem::LoadStreamingLevels() {
   if (!SerializedData.IsValid())
     return;
 
@@ -161,7 +161,7 @@ void USaveGameSubsystem::LoadStreamingLevels() {
 }
 
 // This is called after the persistent level is initialized
-void USaveGameSubsystem::OnWorldInitialized(
+void USerializeSubsystem::OnWorldInitialized(
     UWorld *World, const UWorld::InitializationValues) {
   if (!IsValid(World) || GetWorld() != World) {
     return;
@@ -179,7 +179,7 @@ void USaveGameSubsystem::OnWorldInitialized(
 }
 
 // This is called after the all actors of the level are initialized
-void USaveGameSubsystem::OnActorsInitialized(
+void USerializeSubsystem::OnActorsInitialized(
     const FActorsInitializedParams &Params) {
   if (!IsValid(Params.World) || GetWorld() != Params.World) {
     return;
@@ -215,7 +215,7 @@ void USaveGameSubsystem::OnActorsInitialized(
 }
 
 // This is called when the world is cleaned up
-void USaveGameSubsystem::OnWorldCleanup(UWorld *World, bool, bool) {
+void USerializeSubsystem::OnWorldCleanup(UWorld *World, bool, bool) {
   if (!IsValid(World) || GetWorld() != World) {
     return;
   }
@@ -224,7 +224,7 @@ void USaveGameSubsystem::OnWorldCleanup(UWorld *World, bool, bool) {
 }
 
 // This is called when a streaming level is added to the world
-void USaveGameSubsystem::OnLevelAddedToWorld(ULevel *Level, UWorld *World) {
+void USerializeSubsystem::OnLevelAddedToWorld(ULevel *Level, UWorld *World) {
   if (!IsValid(Level) || GetWorld() != World)
     return;
 
@@ -265,7 +265,8 @@ void USaveGameSubsystem::OnLevelAddedToWorld(ULevel *Level, UWorld *World) {
 
 // This is called just before the moment when a streaming level is removed from
 // the world (in this case, the level is still loaded)
-void USaveGameSubsystem::OnLevelRemovedFromWorld(ULevel *Level, UWorld *World) {
+void USerializeSubsystem::OnLevelRemovedFromWorld(ULevel *Level,
+                                                  UWorld *World) {
   if (!IsValid(Level) || GetWorld() != World)
     return;
 
@@ -293,7 +294,7 @@ void USaveGameSubsystem::OnLevelRemovedFromWorld(ULevel *Level, UWorld *World) {
 }
 
 // This is called just before an actor is spawned
-void USaveGameSubsystem::OnActorPreSpawn(AActor *Actor) {
+void USerializeSubsystem::OnActorPreSpawn(AActor *Actor) {
   if (!IsValid(Actor))
     return;
 
@@ -321,7 +322,7 @@ void USaveGameSubsystem::OnActorPreSpawn(AActor *Actor) {
 }
 
 // This is called just before an actor is destroyed
-void USaveGameSubsystem::OnActorDestroyed(AActor *Actor) {
+void USerializeSubsystem::OnActorDestroyed(AActor *Actor) {
   if (PersistentLevelRecord->Actors->SaveGame.Remove(Actor)) {
     if (USaveGameFunctionLibrary::WasObjectLoaded(Actor))
       PersistentLevelRecord->Actors->Destroyed.Add(Actor);
@@ -337,7 +338,7 @@ void USaveGameSubsystem::OnActorDestroyed(AActor *Actor) {
 
 // This is called after the persistent level is loaded and all data on the
 // persistent level is deserialized
-void USaveGameSubsystem::OnLoadCompleted() {
+void USerializeSubsystem::OnLoadCompleted() {
   CurrentSerializer = nullptr;
 
   // On this point, we have all the data from the persistent level loaded, and

@@ -17,7 +17,7 @@
 #include "UObject/SoftObjectPtr.h"
 #include "UObject/WeakObjectPtr.h"
 
-class USaveGameSubsystem;
+class USerializeSubsystem;
 
 class FSaveGameSerializer : public TSharedFromThis<FSaveGameSerializer> {
 public:
@@ -68,7 +68,7 @@ class TSaveGameSerializer final : public FSaveGameSerializer {
       FBinaryArchiveFormatter>::Result;
 
 public:
-  explicit TSaveGameSerializer(USaveGameSubsystem *InSaveGameSubsystem);
+  explicit TSaveGameSerializer(USerializeSubsystem *InSerializeSubsystem);
 
   // FSerializedData SerializeData();
   // bool DeserializeData(FSerializedData &RawData);
@@ -104,7 +104,7 @@ private:
 
 private:
   /**
-   * Serializes all the actors that the SaveGameSubsystem is keeping track
+   * Serializes all the actors that the SerializeSubsystem is keeping track
    * of. On load, it will also pre-spawn any actors and map any actors with
    * Spawn IDs before running the actual serialization step.
    */
@@ -168,7 +168,7 @@ private:
   // Internal Variables
 private:
   // The game instance subsystem that manages the Serialization
-  const TWeakObjectPtr<USaveGameSubsystem> SaveGameSubsystem;
+  const TWeakObjectPtr<USerializeSubsystem> SerializeSubsystem;
 
   // The data that will be serialized
   TArray<uint8> Data = {};

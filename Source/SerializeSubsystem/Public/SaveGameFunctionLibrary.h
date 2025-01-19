@@ -9,7 +9,7 @@
 #include "SaveGameFunctionLibrary.generated.h"
 
 UCLASS()
-class SAVEGAMEPLUGIN_API USaveGameFunctionLibrary
+class SERIALIZESUBSYSTEM_API USaveGameFunctionLibrary
     : public UBlueprintFunctionLibrary {
   GENERATED_BODY()
 

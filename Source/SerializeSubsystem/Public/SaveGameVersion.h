@@ -3,7 +3,7 @@
 #include "CoreTypes.h"
 #include "Misc/Guid.h"
 
-class SAVEGAMEPLUGIN_API FSaveGameVersion {
+class SERIALIZESUBSYSTEM_API FSaveGameVersion {
 public:
   enum Type {
     // -----<new versions can be added above this line>----------------

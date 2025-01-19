@@ -24,7 +24,7 @@ public:
 };
 
 UCLASS(config = Game, defaultconfig, meta = (DisplayName = "Save Game"))
-class SAVEGAMEPLUGIN_API USaveGameSettings : public UDeveloperSettings {
+class SERIALIZESUBSYSTEM_API USaveGameSettings : public UDeveloperSettings {
   GENERATED_BODY()
 
 public:

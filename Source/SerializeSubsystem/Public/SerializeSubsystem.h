@@ -6,13 +6,14 @@
 #include "Structs/SerializationStructs.h"
 #include "Subsystems/GameInstanceSubsystem.h"
 
-#include "SaveGameSubsystem.generated.h"
+#include "SerializeSubsystem.generated.h"
 
 /**
- * The subsystem that manages the lifetime of a save game.
+ * The subsystem that serializes and deserializes the game world.
  */
-UCLASS()
-class SAVEGAMEPLUGIN_API USaveGameSubsystem : public UGameInstanceSubsystem {
+UCLASS(DisplayName = "Serialize Subsystem",
+       Category = "Serialize Subsystem Plugin")
+class USerializeSubsystem : public UGameInstanceSubsystem {
   GENERATED_BODY()
 
 public:
