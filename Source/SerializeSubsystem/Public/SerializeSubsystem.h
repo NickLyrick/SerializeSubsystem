@@ -22,13 +22,13 @@ public:
   virtual void Deinitialize() override;
   /* End Subsystem API */
 
-  UFUNCTION(BlueprintCallable, Category = "SaveGamePlugin|Save")
+  UFUNCTION(BlueprintCallable, Category = "Serialize Subsystem | Save")
   void Save(UPARAM(DisplayName = "Serialized Data") FSerializedData &Data);
 
-  UFUNCTION(BlueprintCallable, Category = "SaveGamePlugin|Load")
+  UFUNCTION(BlueprintCallable, Category = "Serialize Subsystem | Load")
   void Load(FSerializedData Data);
 
-  UFUNCTION(BlueprintCallable, Category = "SaveGamePlugin|Load")
+  UFUNCTION(BlueprintCallable, Category = "Serialize Subsystem | Load")
   bool IsLoadingSaveGame() const;
 
 private:
