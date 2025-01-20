@@ -89,6 +89,32 @@ bool USaveGameFunctionLibrary::SerializeActorTransform(
   return false;
 }
 
+bool USaveGameFunctionLibrary::SerializeActorHiddenInGame(
+    FSaveGameArchive &Archive, AActor *Actor) {
+  if (Archive.IsValid() && IsValid(Actor)) {
+    const bool bIsLoading =
+        Archive.GetRecord().GetUnderlyingArchive().IsLoading();
+
+    return Archive.SerializeField(TEXT("HiddenInGame"),
+                                  [&](FStructuredArchive::FSlot Slot) {
+                                    bool bIsHiddenInGame;
+
+                                    if (!bIsLoading) {
+                                      bIsHiddenInGame = Actor->IsHidden();
+                                    }
+
+                                    // Serialize the HiddenInGame value
+                                    Slot << bIsHiddenInGame;
+
+                                    if (bIsLoading) {
+                                      Actor->SetHidden(bIsHiddenInGame);
+                                    }
+                                  });
+  }
+
+  return false;
+}
+
 bool USaveGameFunctionLibrary::SerializeItem(FSaveGameArchive &Archive,
                                              int32 &Value, bool bSave) {
   checkf(false, TEXT("Shouldn't call this natively!"));

@@ -21,7 +21,7 @@ public:
    * @param Object The object to check if loaded
    * @return true if object was loaded from an asset
    */
-  UFUNCTION(BlueprintCallable, Category = "SaveGamePlugin|Utilities")
+  UFUNCTION(BlueprintCallable, Category = "Serialize Subsystem | Utilities")
   static bool WasObjectLoaded(const UObject *Object);
 
   /**
@@ -30,7 +30,7 @@ public:
    * @param Archive The archive that the save game is serializing
    * @return true if save game is loading, false if save game is saving
    */
-  UFUNCTION(BlueprintPure, Category = "SaveGamePlugin|Utilities")
+  UFUNCTION(BlueprintPure, Category = "Serialize Subsystem | Utilities")
   static bool IsLoading(const FSaveGameArchive &Archive);
 
   /**
@@ -41,10 +41,23 @@ public:
    * @param Actor The actor whose transform will be serialized
    * @return true if the transform was serialized
    */
-  UFUNCTION(BlueprintCallable, Category = "SaveGamePlugin|Serialize",
+  UFUNCTION(BlueprintCallable, Category = "Serialize Subsystem | Serialize",
             meta = (DefaultToSelf = "Actor"))
   static bool SerializeActorTransform(UPARAM(ref) FSaveGameArchive &Archive,
                                       AActor *Actor);
+
+  /**
+   * Helper method to serialize an actor's "Hidden In Game" value. If loading,
+   * will set the actor's Hidden.
+   *
+   * @param Archive The archive that the save game is serializing
+   * @param Actor The actor whose Hidden will be serialized
+   * @return true if the Hidden was serialized
+   */
+  UFUNCTION(BlueprintCallable, Category = "Serialize Subsystem | Serialize",
+            meta = (DefaultToSelf = "Actor"))
+  static bool SerializeActorHiddenInGame(UPARAM(ref) FSaveGameArchive &Archive,
+                                         AActor *Actor);
 
   /**
    * Serialize a property to/from the specified archive.
@@ -60,7 +73,7 @@ public:
    * @return true if the property was serialized
    */
   UFUNCTION(BlueprintCallable, CustomThunk,
-            Category = "SaveGamePlugin|Serialize",
+            Category = "Serialize Subsystem | Serialize",
             meta = (CustomStructureParam = "Value", AdvancedDisplay = "bSave"))
   static bool SerializeItem(UPARAM(ref) FSaveGameArchive &Archive,
                             UPARAM(ref) int32 &Value, bool bSave = true);
@@ -76,7 +89,7 @@ public:
    * @param VersionEnum The enum of the version we want to serialize
    * @return The version that was serialized (-1 if not exist or no version)
    */
-  UFUNCTION(BlueprintCallable, Category = "SaveGamePlugin|Serialize")
+  UFUNCTION(BlueprintCallable, Category = "Serialize Subsystem | Serialize")
   static int32 UseCustomVersion(UPARAM(ref) FSaveGameArchive &Archive,
                                 const UEnum *VersionEnum);
 };
