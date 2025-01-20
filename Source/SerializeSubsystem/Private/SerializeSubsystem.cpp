@@ -274,6 +274,10 @@ void USerializeSubsystem::OnLevelRemovedFromWorld(ULevel *Level,
   const TSoftObjectPtr<ULevelStreaming> StreamingLevel =
       PersistentLevelRecord->FindStreamingLevel(Level);
 
+  // If there is no data for the streaming level return early
+  if (!StreamingLevel.IsValid())
+    return;
+
   if (SerializedData.IsValid()) {
     TSaveGameSerializer<false> BinarySerializer(this);
 
