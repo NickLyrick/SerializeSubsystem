@@ -230,6 +230,9 @@ void USerializeSubsystem::OnLevelAddedToWorld(ULevel *Level, UWorld *World) {
 
   const TSoftObjectPtr<ULevelStreaming> StreamingLevel =
       PersistentLevelRecord->FindStreamingLevel(Level);
+  
+  if (!StreamingLevel.IsValid())
+    return;
 
   for (AActor *Actor : Level->Actors) {
     if (IsValid(Actor) && Actor->Implements<USaveGameObject>()) {
