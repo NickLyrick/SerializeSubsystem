@@ -263,8 +263,8 @@ void USerializeSubsystem::OnLevelAddedToWorld(ULevel *Level, UWorld *World) {
   if (SerializedData.IsValid()) {
     const bool bIsStreamingLevelDataExists =
         SerializedData->Levels.Contains(LevelName) &&
-        SerializedData->Levels[LevelName]
-            .StreamingLevels.Contains(StreamingLevel);
+        SerializedData->Levels[LevelName].StreamingLevels.Contains(
+            StreamingLevel);
 
     if (bIsStreamingLevelDataExists) {
       // If we have data for the streaming level, deserialize it

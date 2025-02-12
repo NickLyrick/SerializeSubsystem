@@ -56,7 +56,7 @@ struct FSerializedData {
   UPROPERTY(BlueprintReadWrite, meta = (HideInDetailPanel),
             Category = "Serialization Data")
   TArray<uint8> Header = {};
-  
+
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Serialization Data")
   FString LevelName;
 
