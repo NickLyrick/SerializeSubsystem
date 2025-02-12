@@ -56,10 +56,10 @@ struct FSerializedData {
   UPROPERTY(BlueprintReadWrite, meta = (HideInDetailPanel),
             Category = "Serialization Data")
   TArray<uint8> Header = {};
+  
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Serialization Data")
+  FString LevelName;
 
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Serialization Data")
-  TSoftObjectPtr<ULevel> CurrentLevel;
-
-  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Serialization Data")
-  TMap<TSoftObjectPtr<ULevel>, FLevelData> Levels = {};
+  TMap<FString, FLevelData> Levels = {};
 };

@@ -43,11 +43,12 @@ void USerializeSubsystem::Save(FSerializedData &Data) {
   { // Serialize Level Data
     TSaveGameSerializer<false> BinarySerializer(this);
 
-    SerializedData->CurrentLevel = Level->GetWorld()->GetCurrentLevel();
+    SerializedData->LevelName =
+        Level->GetOutermost()->GetLoadedPath().GetPackageName();
 
-    SerializedData->Levels.FindOrAdd(Level.Get());
-    SerializedData->Levels[Level.Get()].Data =
-        BinarySerializer.SerializeLevelData(Level.Get());
+    SerializedData->Levels.FindOrAdd(SerializedData->LevelName);
+    SerializedData->Levels[SerializedData->LevelName].Data =
+        BinarySerializer.SerializeLevelData(Level);
   }
 
 #if !UE_BUILD_SHIPPING && WITH_TEXT_ARCHIVE_SUPPORT
@@ -90,8 +91,8 @@ void USerializeSubsystem::Load(FSerializedData Data) {
     CurrentSerializer = BinarySerializer.ToSharedPtr();
 
     BinarySerializer->DeserializeLevelData(
-        SerializedData->CurrentLevel.Get(),
-        SerializedData->Levels[SerializedData->CurrentLevel.Get()].Data);
+        SerializedData->LevelName,
+        SerializedData->Levels[SerializedData->LevelName].Data);
   }
 
   // NOTICE:
@@ -105,12 +106,14 @@ bool USerializeSubsystem::IsLoadingSaveGame() const {
 
 // Used to serialize the streaming levels data
 void USerializeSubsystem::SaveStreamingLevels() {
-  SerializedData->CurrentLevel = GetWorld()->GetCurrentLevel();
+  const TSoftObjectPtr<ULevel> Level = GetWorld()->GetCurrentLevel();
+  const FString LevelName =
+      Level->GetOutermost()->GetLoadedPath().GetPackageName();
 
   // Serialize Streaming Levels Data
   for (TPair StreamingLevel : PersistentLevelRecord->StreamingLevels) {
     // Save the state of the streaming level
-    SerializedData->Levels.FindOrAdd(SerializedData->CurrentLevel.Get())
+    SerializedData->Levels.FindOrAdd(LevelName)
         .StreamingLevels.FindOrAdd(StreamingLevel.Key)
         .SaveStreamingLevelState(StreamingLevel.Key);
 
@@ -122,7 +125,7 @@ void USerializeSubsystem::SaveStreamingLevels() {
 
     // Actually serialize the streaming level data
     TSaveGameSerializer<false> BinarySerializer(this);
-    SerializedData->Levels.FindOrAdd(SerializedData->CurrentLevel.Get())
+    SerializedData->Levels.FindOrAdd(LevelName)
         .StreamingLevels.FindOrAdd(StreamingLevel.Key)
         .Data =
         BinarySerializer.SerializeStreamingLevelData(StreamingLevel.Key);
@@ -140,9 +143,15 @@ void USerializeSubsystem::LoadStreamingLevels() {
   if (!SerializedData.IsValid())
     return;
 
+  const FString LevelName = GetWorld()
+                                ->GetCurrentLevel()
+                                ->GetOutermost()
+                                ->GetLoadedPath()
+                                .GetPackageName();
+
   for (TPair StreamingLevel : PersistentLevelRecord->StreamingLevels) {
     // Load State of Streaming Level (bIsVisible and bIsLoad)
-    SerializedData->Levels.FindOrAdd(SerializedData->CurrentLevel.Get())
+    SerializedData->Levels.FindOrAdd(LevelName)
         .StreamingLevels.FindOrAdd(StreamingLevel.Key)
         .LoadStreamingLevelState(StreamingLevel.Key);
 
@@ -154,7 +163,7 @@ void USerializeSubsystem::LoadStreamingLevels() {
         TSaveGameSerializer<true>(this);
     BinarySerializer.DeserializeStreamingLevelData(
         StreamingLevel.Key.Get(),
-        SerializedData->Levels.FindOrAdd(SerializedData->CurrentLevel.Get())
+        SerializedData->Levels.FindOrAdd(LevelName)
             .StreamingLevels.FindOrAdd(StreamingLevel.Key)
             .Data);
   }
@@ -168,7 +177,11 @@ void USerializeSubsystem::OnWorldInitialized(
   }
 
   PersistentLevelRecord = MakeShared<FLevelStruct>(World);
-  SerializedData->CurrentLevel = World->GetCurrentLevel();
+  SerializedData->LevelName = GetWorld()
+                                  ->GetCurrentLevel()
+                                  ->GetOutermost()
+                                  ->GetLoadedPath()
+                                  .GetPackageName();
 
   // Register for Actor Pre-Spawn and Destroyed handlers
   World->AddOnActorPreSpawnInitialization(
@@ -231,6 +244,15 @@ void USerializeSubsystem::OnLevelAddedToWorld(ULevel *Level, UWorld *World) {
   const TSoftObjectPtr<ULevelStreaming> StreamingLevel =
       PersistentLevelRecord->FindStreamingLevel(Level);
 
+  if (!StreamingLevel.IsValid())
+    return;
+
+  FString LevelName = GetWorld()
+                          ->GetCurrentLevel()
+                          ->GetOutermost()
+                          ->GetLoadedPath()
+                          .GetPackageName();
+
   for (AActor *Actor : Level->Actors) {
     if (IsValid(Actor) && Actor->Implements<USaveGameObject>()) {
       PersistentLevelRecord->StreamingLevels[StreamingLevel]
@@ -240,15 +262,15 @@ void USerializeSubsystem::OnLevelAddedToWorld(ULevel *Level, UWorld *World) {
 
   if (SerializedData.IsValid()) {
     const bool bIsStreamingLevelDataExists =
-        SerializedData->Levels.Contains(SerializedData->CurrentLevel) &&
-        SerializedData->Levels[SerializedData->CurrentLevel]
+        SerializedData->Levels.Contains(LevelName) &&
+        SerializedData->Levels[LevelName]
             .StreamingLevels.Contains(StreamingLevel);
 
     if (bIsStreamingLevelDataExists) {
       // If we have data for the streaming level, deserialize it
       // One of the edge cases. When we already store streaming level state but
       // never serialize it
-      if (SerializedData->Levels[SerializedData->CurrentLevel]
+      if (SerializedData->Levels[LevelName]
               .StreamingLevels[StreamingLevel]
               .Data.IsEmpty())
         return;
@@ -256,7 +278,7 @@ void USerializeSubsystem::OnLevelAddedToWorld(ULevel *Level, UWorld *World) {
       TSaveGameSerializer<true> BinarySerializer =
           TSaveGameSerializer<true>(this);
       BinarySerializer.DeserializeStreamingLevelData(
-          StreamingLevel, SerializedData->Levels[SerializedData->CurrentLevel]
+          StreamingLevel, SerializedData->Levels[LevelName]
                               .StreamingLevels[StreamingLevel]
                               .Data);
     }
@@ -271,6 +293,8 @@ void USerializeSubsystem::OnLevelRemovedFromWorld(ULevel *Level,
     return;
 
   const TSoftObjectPtr<ULevel> LevelCurrent = GetWorld()->GetCurrentLevel();
+  const FString LevelName =
+      LevelCurrent->GetOutermost()->GetLoadedPath().GetPackageName();
   const TSoftObjectPtr<ULevelStreaming> StreamingLevel =
       PersistentLevelRecord->FindStreamingLevel(Level);
 
@@ -281,7 +305,7 @@ void USerializeSubsystem::OnLevelRemovedFromWorld(ULevel *Level,
   if (SerializedData.IsValid()) {
     TSaveGameSerializer<false> BinarySerializer(this);
 
-    SerializedData->Levels.FindOrAdd(LevelCurrent)
+    SerializedData->Levels.FindOrAdd(LevelName)
         .StreamingLevels.FindOrAdd(StreamingLevel)
         .Data = BinarySerializer.SerializeStreamingLevelData(StreamingLevel);
 
