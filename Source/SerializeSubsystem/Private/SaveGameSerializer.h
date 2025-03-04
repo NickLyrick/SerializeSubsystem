@@ -77,8 +77,7 @@ public:
   void DeserializeHeaderData(TArray<uint8> &HeaderData);
 
   TArray<uint8> SerializeLevelData(TSoftObjectPtr<ULevel> Level);
-  void DeserializeLevelData(TSoftObjectPtr<ULevel> Level,
-                            TArray<uint8> &LevelData);
+  void DeserializeLevelData(const FString &LevelName, TArray<uint8> &LevelData);
 
   TArray<uint8> SerializeStreamingLevelData(
       const TSoftObjectPtr<ULevelStreaming> &StreamingLevel);

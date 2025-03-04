@@ -322,18 +322,15 @@ TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeLevelData(
 
 template <bool bIsLoading, bool bIsTextFormat>
 void TSaveGameSerializer<bIsLoading, bIsTextFormat>::DeserializeLevelData(
-    TSoftObjectPtr<ULevel> Level, TArray<uint8> &LevelData) {
+    const FString &LevelName, TArray<uint8> &LevelData) {
   if (!bIsTextFormat) {
     // Decompress the loaded save game data
     FSaveGameMemoryArchive CompressorArchive(LevelData);
     SerializeCompressedData<true>(CompressorArchive, Data);
   }
 
-  const FString MapName =
-      Level->GetOutermost()->GetLoadedPath().GetPackageName();
-
   // If we don't have a map, we should fail
-  if (MapName.IsEmpty()) {
+  if (LevelName.IsEmpty()) {
     return;
   }
 
@@ -348,7 +345,7 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::DeserializeLevelData(
   FCoreUObjectDelegates::PostLoadMapWithWorld.AddThreadSafeSP(
       this, &TSaveGameSerializer::OnMapLoad);
 
-  World->SeamlessTravel(MapName, true);
+  World->SeamlessTravel(LevelName, true);
 }
 
 template <bool bIsLoading, bool bIsTextFormat>
