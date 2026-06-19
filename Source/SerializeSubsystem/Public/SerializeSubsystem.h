@@ -31,6 +31,17 @@ public:
   UFUNCTION(BlueprintCallable, Category = "SaveGamePlugin|Load")
   bool IsLoadingSaveGame() const;
 
+#if !UE_BUILD_SHIPPING && WITH_TEXT_ARCHIVE_SUPPORT
+  /**
+   * Loads level state from raw JSON bytes. Intended for automated tests:
+   * pair with the JSON files produced by Save() in non-shipping builds.
+   *
+   * @param JsonLevelData Raw UTF-8 JSON bytes (output of SerializeLevelData
+   *                      with TSaveGameSerializer<false, true>).
+   */
+  void LoadFromJson(TArray<uint8> JsonLevelData);
+#endif
+
 private:
   void SaveStreamingLevels();
   void LoadStreamingLevels();

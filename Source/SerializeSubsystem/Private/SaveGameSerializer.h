@@ -3,6 +3,7 @@
 #include "Misc/Build.h"
 
 #if WITH_TEXT_ARCHIVE_SUPPORT
+#include "Serialization/Formatters/JsonArchiveInputFormatter.h"
 #include "Serialization/Formatters/JsonArchiveOutputFormatter.h"
 #endif
 
@@ -54,42 +55,54 @@ class TSaveGameSerializer final : public FSaveGameSerializer {
   using FSaveGameMemoryArchive =
       typename TChooseClass<bIsLoading, FMemoryReader, FMemoryWriter>::Result;
 
-  static_assert(!bIsLoading || !bIsTextFormat,
-                "This serializer hasn't been implemented for text based "
-                "loading, only saving!");
   static_assert(WITH_TEXT_ARCHIVE_SUPPORT || !bIsTextFormat,
                 "Engine isn't compiled with text archive support, cannot use "
                 "text based TSaveGameSerializer");
 
   using FSaveGameFormatter = typename TChooseClass<
       bIsTextFormat && WITH_TEXT_ARCHIVE_SUPPORT,
-      typename TChooseClass<bIsLoading, FBinaryArchiveFormatter,
+      typename TChooseClass<bIsLoading, FJsonArchiveInputFormatter,
                             FJsonArchiveOutputFormatter>::Result,
       FBinaryArchiveFormatter>::Result;
 
 public:
-  explicit TSaveGameSerializer(USerializeSubsystem *InSerializeSubsystem);
-
-  // FSerializedData SerializeData();
-  // bool DeserializeData(FSerializedData &RawData);
+  /**
+   * For binary (saving/loading) and JSON saving: InInitialData is left empty.
+   * For JSON loading: pass the raw JSON bytes here — FJsonArchiveInputFormatter
+   * parses the JSON eagerly in its constructor and requires the data upfront.
+   */
+  explicit TSaveGameSerializer(USerializeSubsystem *InSerializeSubsystem,
+                               TArray<uint8> InInitialData = {});
 
   TArray<uint8> SerializeHeaderData();
+  /** Binary loading: decompresses HeaderData then reads. */
   void DeserializeHeaderData(TArray<uint8> &HeaderData);
+  /** JSON loading: data was provided at construction, just reads the header. */
+  void DeserializeHeaderData();
 
   TArray<uint8> SerializeLevelData(TSoftObjectPtr<ULevel> Level);
+  /** Binary loading: decompresses LevelData, then triggers seamless travel. */
   void DeserializeLevelData(TSoftObjectPtr<ULevel> Level,
                             TArray<uint8> &LevelData);
+  /** JSON loading: data was provided at construction, triggers seamless travel. */
+  void DeserializeLevelData(TSoftObjectPtr<ULevel> Level);
 
   TArray<uint8> SerializeStreamingLevelData(
       const TSoftObjectPtr<ULevelStreaming> &StreamingLevel);
+  /** Binary loading: decompresses StreamingLevelData then deserializes. */
   void DeserializeStreamingLevelData(
       const TSoftObjectPtr<ULevelStreaming> &StreamingLevel,
       TArray<uint8> &StreamingLevelData);
+  /** JSON loading: data was provided at construction, deserializes directly. */
+  void DeserializeStreamingLevelData(
+      const TSoftObjectPtr<ULevelStreaming> &StreamingLevel);
 
 private:
-  // static FString GetSaveName();
-
   void OnMapLoad(UWorld *World);
+
+  /** Shared logic for Deserialize*LevelData: validates map name and triggers
+   * seamless travel (which will call OnMapLoad when the level is ready). */
+  void InitiateLevelLoad(const TSoftObjectPtr<ULevel> &Level);
 
   /** Serializes information about the archive, like Engine Version or position
    * of versioning information */

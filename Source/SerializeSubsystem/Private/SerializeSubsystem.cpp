@@ -103,6 +103,19 @@ bool USerializeSubsystem::IsLoadingSaveGame() const {
   return CurrentSerializer.IsValid();
 }
 
+#if !UE_BUILD_SHIPPING && WITH_TEXT_ARCHIVE_SUPPORT
+void USerializeSubsystem::LoadFromJson(TArray<uint8> JsonLevelData) {
+  // FJsonArchiveInputFormatter parses JSON eagerly in its constructor, so the
+  // data must be passed upfront rather than provided via DeserializeLevelData.
+  const TSharedRef<TSaveGameSerializer<true, true>> JsonSerializer =
+      MakeShared<TSaveGameSerializer<true, true>>(this,
+                                                  MoveTemp(JsonLevelData));
+  CurrentSerializer = JsonSerializer.ToSharedPtr();
+
+  JsonSerializer->DeserializeLevelData(SerializedData->CurrentLevel.Get());
+}
+#endif
+
 // Used to serialize the streaming levels data
 void USerializeSubsystem::SaveStreamingLevels() {
   SerializedData->CurrentLevel = GetWorld()->GetCurrentLevel();
