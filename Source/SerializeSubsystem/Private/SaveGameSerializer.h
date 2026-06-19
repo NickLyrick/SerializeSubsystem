@@ -178,6 +178,9 @@ private:
   void SerializeActorComponent(FStructuredArchive::FMap &ComponentsMap,
                                TSoftObjectPtr<UActorComponent> &ActorComponent);
 
+  /** Serializes an actor's script properties, components, and custom data. */
+  void SerializeActorData(AActor *Actor, FStructuredArchive::FSlot &ActorSlot);
+
   // Internal Variables
 private:
   // The game instance subsystem that manages the Serialization

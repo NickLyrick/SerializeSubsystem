@@ -504,17 +504,7 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActors(
                 return;
               }
 
-              Actor->SerializeScriptProperties(
-                  ActorSlot.EnterAttribute(TEXT("Properties")));
-              SerializeActorComponents(Actor, ActorSlot);
-
-              FStructuredArchive::FSlot CustomDataSlot =
-                  ActorSlot.EnterAttribute(TEXT("Data"));
-              FStructuredArchive::FRecord CustomDataRecord =
-                  CustomDataSlot.EnterRecord();
-              FSaveGameArchive SaveGameArchive(CustomDataRecord, Actor);
-              ISaveGameObject::Execute_OnSerialize(Actor, SaveGameArchive,
-                                                   bIsLoading);
+              SerializeActorData(Actor, ActorSlot);
             }
           });
     }
@@ -553,24 +543,24 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActors(
 
       SerializeActor(
           ActorsMap, Actor,
-          [&](const FString &, const FSoftClassPath &, const FGuid &SpawnID,
+          [&](const FString &, const FSoftClassPath &, const FGuid &,
               FStructuredArchive::FSlot &ActorSlot) {
-            Actor->SerializeScriptProperties(
-                ActorSlot.EnterAttribute(TEXT("Properties")));
-
-            SerializeActorComponents(Actor, ActorSlot);
-
-            FStructuredArchive::FSlot CustomDataSlot =
-                ActorSlot.EnterAttribute(TEXT("Data"));
-            FStructuredArchive::FRecord CustomDataRecord =
-                CustomDataSlot.EnterRecord();
-
-            FSaveGameArchive SaveGameArchive(CustomDataRecord, Actor);
-            ISaveGameObject::Execute_OnSerialize(Actor, SaveGameArchive,
-                                                 bIsLoading);
+            SerializeActorData(Actor, ActorSlot);
           });
     }
   }
+}
+
+template <bool bIsLoading, bool bIsTextFormat>
+void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActorData(
+    AActor *Actor, FStructuredArchive::FSlot &ActorSlot) {
+  Actor->SerializeScriptProperties(ActorSlot.EnterAttribute(TEXT("Properties")));
+  SerializeActorComponents(Actor, ActorSlot);
+
+  FStructuredArchive::FSlot CustomDataSlot = ActorSlot.EnterAttribute(TEXT("Data"));
+  FStructuredArchive::FRecord CustomDataRecord = CustomDataSlot.EnterRecord();
+  FSaveGameArchive SaveGameArchive(CustomDataRecord, Actor);
+  ISaveGameObject::Execute_OnSerialize(Actor, SaveGameArchive, bIsLoading);
 }
 
 // Serialize the actor's components
