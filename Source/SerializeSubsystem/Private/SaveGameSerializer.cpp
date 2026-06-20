@@ -1,6 +1,7 @@
 ﻿#include "SaveGameSerializer.h"
 
 #include "Engine/Level.h"
+#include "Misc/Crc.h"
 #include "Misc/EngineVersion.h"
 #include "Serialization/CustomVersion.h"
 #include "UObject/Package.h"
@@ -16,6 +17,75 @@
 DEFINE_LOG_CATEGORY_STATIC(LogSaveGame, Log, All);
 
 #define LEVEL_SUBPATH_PREFIX TEXT("PersistentLevel.")
+
+// Fixed-size manifest written at the front of every binary blob (before compressed data).
+// Readable without decompression — allows fast rejection of incompatible or corrupt files.
+struct FSaveGameManifest {
+  static constexpr uint32 MAGIC = 0x53475356; // 'S','G','S','V'
+  uint32 Magic         = MAGIC;
+  int32  PluginVersion = 0;
+  uint32 DataCRC       = 0;  // CRC32 of the compressed bytes that follow
+};
+static_assert(sizeof(FSaveGameManifest) == 12, "FSaveGameManifest layout changed");
+
+// Save path: compresses Data, prepends manifest, returns the full blob.
+static TArray<uint8> CompressAndWrapBlob(TArray<uint8> &Data) {
+  TArray<uint8> Compressed;
+  FMemoryWriter CompressAr(Compressed);
+  SerializeCompressedData<false>(CompressAr, Data);
+
+  FSaveGameManifest Manifest;
+  Manifest.PluginVersion = static_cast<int32>(FSaveGameVersion::LatestVersion);
+  Manifest.DataCRC = FCrc::MemCrc32(Compressed.GetData(), Compressed.Num());
+
+  TArray<uint8> Blob;
+  Blob.Reserve(sizeof(FSaveGameManifest) + Compressed.Num());
+  Blob.Append(reinterpret_cast<const uint8 *>(&Manifest), sizeof(Manifest));
+  Blob.Append(MoveTemp(Compressed));
+  return Blob;
+}
+
+// Load path: validates manifest, returns Success or the specific failure code.
+// On Success, CompressorArchive is seeked past the manifest, ready for SerializeCompressedData.
+static ESaveGameLoadResult ValidateManifest(const TArray<uint8> &Blob,
+                                            FMemoryReader &CompressorArchive) {
+  if (Blob.Num() < static_cast<int32>(sizeof(FSaveGameManifest))) {
+    UE_LOG(LogSaveGame, Error, TEXT("Blob too small to contain manifest header."));
+    return ESaveGameLoadResult::CorruptedData;
+  }
+
+  FSaveGameManifest Manifest;
+  FMemory::Memcpy(&Manifest, Blob.GetData(), sizeof(Manifest));
+
+  if (Manifest.Magic != FSaveGameManifest::MAGIC) {
+    UE_LOG(LogSaveGame, Error,
+           TEXT("Manifest magic mismatch (got 0x%08X). File may be from a "
+                "legacy plugin version or is corrupted."),
+           Manifest.Magic);
+    return ESaveGameLoadResult::CorruptedData;
+  }
+
+  if (Manifest.PluginVersion <
+      static_cast<int32>(FSaveGameVersion::MinCompatibleVersion)) {
+    UE_LOG(LogSaveGame, Error,
+           TEXT("Blob plugin version %d is below minimum compatible version %d."),
+           Manifest.PluginVersion,
+           static_cast<int32>(FSaveGameVersion::MinCompatibleVersion));
+    return ESaveGameLoadResult::IncompatibleVersion;
+  }
+
+  const uint32 ActualCRC = FCrc::MemCrc32(
+      Blob.GetData() + sizeof(Manifest), Blob.Num() - sizeof(Manifest));
+  if (ActualCRC != Manifest.DataCRC) {
+    UE_LOG(LogSaveGame, Error,
+           TEXT("CRC mismatch (expected 0x%08X, got 0x%08X). File is corrupted."),
+           Manifest.DataCRC, ActualCRC);
+    return ESaveGameLoadResult::CorruptedData;
+  }
+
+  CompressorArchive.Seek(sizeof(FSaveGameManifest));
+  return ESaveGameLoadResult::Success;
+}
 
 template <bool bLoading>
 FORCEINLINE_DEBUGGABLE bool SerializeCompressedData(FArchive &Ar,
@@ -100,13 +170,8 @@ TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeHeaderData() {
   // archives
   StructuredArchive.Close();
 
-  if (!bIsTextFormat && !bIsLoading) {
-    // Compress the save game data
-    TArray<uint8> CompressedData;
-    FSaveGameMemoryArchive CompressorArchive(CompressedData);
-    SerializeCompressedData<false>(CompressorArchive, Data);
-
-    return CompressedData;
+  if constexpr (!bIsTextFormat && !bIsLoading) {
+    return CompressAndWrapBlob(Data);
   }
 
   ISaveGameSystem *SaveSystem =
@@ -126,8 +191,14 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::DeserializeHeaderData(
   TRACE_BOOKMARK(TEXT("Begin: DeserializeHeaderData[%s]"),
                  bIsTextFormat ? TEXT("Text") : TEXT("Binary"));
 
-  if (!bIsTextFormat) {
+  if constexpr (!bIsTextFormat) {
     FSaveGameMemoryArchive CompressorArchive(HeaderData);
+    const ESaveGameLoadResult ManifestResult =
+        ValidateManifest(HeaderData, CompressorArchive);
+    if (ManifestResult != ESaveGameLoadResult::Success) {
+      BroadcastLoadFailed(ManifestResult);
+      return;
+    }
     if (!SerializeCompressedData<true>(CompressorArchive, Data)) {
       BroadcastLoadFailed(ESaveGameLoadResult::CorruptedData);
       return;
@@ -189,13 +260,8 @@ TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeLevelData(
   // archives
   StructuredArchive.Close();
 
-  if (!bIsTextFormat && !bIsLoading) {
-    // Compress the save game data
-    TArray<uint8> CompressedData;
-    FSaveGameMemoryArchive CompressorArchive(CompressedData);
-    SerializeCompressedData<false>(CompressorArchive, Data);
-
-    return CompressedData;
+  if constexpr (!bIsTextFormat && !bIsLoading) {
+    return CompressAndWrapBlob(Data);
   }
 
   ISaveGameSystem *SaveSystem =
@@ -238,8 +304,14 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::InitiateLevelLoad(
 template <bool bIsLoading, bool bIsTextFormat>
 void TSaveGameSerializer<bIsLoading, bIsTextFormat>::DeserializeLevelData(
     TSoftObjectPtr<ULevel> Level, TArray<uint8> &LevelData) {
-  if (!bIsTextFormat) {
+  if constexpr (!bIsTextFormat) {
     FSaveGameMemoryArchive CompressorArchive(LevelData);
+    const ESaveGameLoadResult ManifestResult =
+        ValidateManifest(LevelData, CompressorArchive);
+    if (ManifestResult != ESaveGameLoadResult::Success) {
+      BroadcastLoadFailed(ManifestResult);
+      return;
+    }
     if (!SerializeCompressedData<true>(CompressorArchive, Data)) {
       BroadcastLoadFailed(ESaveGameLoadResult::CorruptedData);
       return;
@@ -284,13 +356,8 @@ TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeStreamingLevelData(
   // archives
   StructuredArchive.Close();
 
-  if (!bIsTextFormat && !bIsLoading) {
-    // Compress the save game data
-    TArray<uint8> CompressedData;
-    FSaveGameMemoryArchive CompressorArchive(CompressedData);
-    SerializeCompressedData<false>(CompressorArchive, Data);
-
-    return CompressedData;
+  if constexpr (!bIsTextFormat && !bIsLoading) {
+    return CompressAndWrapBlob(Data);
   }
 
   ISaveGameSystem *SaveSystem =
@@ -315,8 +382,14 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::
   TRACE_BOOKMARK(TEXT("Begin: DeserializeStreamingLevelData[%s]"),
                  bIsTextFormat ? TEXT("Text") : TEXT("Binary"));
 
-  if (!bIsTextFormat) {
+  if constexpr (!bIsTextFormat) {
     FSaveGameMemoryArchive CompressorArchive(StreamingLevelData);
+    const ESaveGameLoadResult ManifestResult =
+        ValidateManifest(StreamingLevelData, CompressorArchive);
+    if (ManifestResult != ESaveGameLoadResult::Success) {
+      BroadcastLoadFailed(ManifestResult);
+      return;
+    }
     if (!SerializeCompressedData<true>(CompressorArchive, Data)) {
       BroadcastLoadFailed(ESaveGameLoadResult::CorruptedData);
       return;
