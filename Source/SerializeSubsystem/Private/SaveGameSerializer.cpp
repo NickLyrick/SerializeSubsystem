@@ -29,7 +29,7 @@ struct FSaveGameManifest {
 static_assert(sizeof(FSaveGameManifest) == 12, "FSaveGameManifest layout changed");
 
 // Save path: compresses Data, prepends manifest, returns the full blob.
-static TArray<uint8> CompressAndWrapBlob(TArray<uint8> &Data) {
+static TArray<uint8> CompressAndWrapBlob(const TArray<uint8> &Data) {
   TArray<uint8> Compressed;
   FMemoryWriter CompressAr(Compressed);
   SerializeCompressedData<false>(CompressAr, Data);
@@ -45,8 +45,8 @@ static TArray<uint8> CompressAndWrapBlob(TArray<uint8> &Data) {
   return Blob;
 }
 
-// Load path: validates manifest, returns Success or the specific failure code.
-// On Success, CompressorArchive is seeked past the manifest, ready for SerializeCompressedData.
+// Load path: validates manifest magic and CRC.
+// On Success, CompressorArchive is positioned past the manifest, ready for SerializeCompressedData.
 static ESaveGameLoadResult ValidateManifest(const TArray<uint8> &Blob,
                                             FMemoryReader &CompressorArchive) {
   if (Blob.Num() < static_cast<int32>(sizeof(FSaveGameManifest))) {
@@ -55,7 +55,7 @@ static ESaveGameLoadResult ValidateManifest(const TArray<uint8> &Blob,
   }
 
   FSaveGameManifest Manifest;
-  FMemory::Memcpy(&Manifest, Blob.GetData(), sizeof(Manifest));
+  CompressorArchive.Serialize(&Manifest, sizeof(Manifest));
 
   if (Manifest.Magic != FSaveGameManifest::MAGIC) {
     UE_LOG(LogSaveGame, Error,
@@ -63,15 +63,6 @@ static ESaveGameLoadResult ValidateManifest(const TArray<uint8> &Blob,
                 "legacy plugin version or is corrupted."),
            Manifest.Magic);
     return ESaveGameLoadResult::CorruptedData;
-  }
-
-  if (Manifest.PluginVersion <
-      static_cast<int32>(FSaveGameVersion::MinCompatibleVersion)) {
-    UE_LOG(LogSaveGame, Error,
-           TEXT("Blob plugin version %d is below minimum compatible version %d."),
-           Manifest.PluginVersion,
-           static_cast<int32>(FSaveGameVersion::MinCompatibleVersion));
-    return ESaveGameLoadResult::IncompatibleVersion;
   }
 
   const uint32 ActualCRC = FCrc::MemCrc32(
@@ -83,7 +74,6 @@ static ESaveGameLoadResult ValidateManifest(const TArray<uint8> &Blob,
     return ESaveGameLoadResult::CorruptedData;
   }
 
-  CompressorArchive.Seek(sizeof(FSaveGameManifest));
   return ESaveGameLoadResult::Success;
 }
 
