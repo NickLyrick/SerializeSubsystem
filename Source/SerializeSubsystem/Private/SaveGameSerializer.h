@@ -28,18 +28,25 @@ public:
 };
 
 /**
- * Serializes/deserializes the game world across three separately-compressed blobs.
+ * Four template instantiations exist (see bottom of .cpp):
+ *   <false, false> = Binary Save   <true, false> = Binary Load
+ *   <false, true>  = JSON Save     <true, true>  = JSON Load
+ * JSON instantiations are compiled only under #if !UE_BUILD_SHIPPING && WITH_TEXT_ARCHIVE_SUPPORT.
  *
- * Header blob (FSerializedData::Header):
- *   EngineVersion, PackageVersion [binary], VersionsOffset [binary],
- *   CustomVersions [FCustomVersionContainer, stored at VersionsOffset]
+ * Blob layout (three separately-compressed blobs per save):
  *
- * Level blob (FSerializedData::Levels[L].Data) and
- * Streaming level blob (FSerializedData::Levels[L].StreamingLevels[SL].Data):
- *   Actors (map):
- *     ActorName → Class [if dynamically spawned], GUID [if ISaveGameSpawnActor],
- *                 DataSize [binary only], Properties, Components (map), Data
- *   DestroyedActors (array): ActorName, ...
+ *   Header blob (FSerializedData::Header):
+ *     EngineVersion, PackageVersion [binary], VersionsOffset [binary],
+ *     CustomVersions [FCustomVersionContainer] — stored at VersionsOffset so the
+ *     deserializer can seek directly to version data before touching actor blobs.
+ *
+ *   Level blob  (FSerializedData::Levels[L].Data) and
+ *   Streaming level blob (FSerializedData::Levels[L].StreamingLevels[SL].Data):
+ *     Actors (map):
+ *       ActorName → Class [if dynamically spawned], GUID [if ISaveGameSpawnActor],
+ *                   DataSize [binary only — enables skip-on-corruption], Properties,
+ *                   Components (map), Data
+ *     DestroyedActors (array): ActorName, ...
  */
 template <bool bIsLoading, bool bIsTextFormat = false>
 class TSaveGameSerializer final : public FSaveGameSerializer
@@ -85,114 +92,45 @@ public:
 private:
 	void OnMapLoad(UWorld* World);
 
-	/** Shared logic for Deserialize*LevelData: validates map name and triggers
-	 * seamless travel (which will call OnMapLoad when the level is ready). */
 	void InitiateLevelLoad(const FString& LevelName);
-
-	/** Serializes information about the archive, like Engine Version or position
-	 * of versioning information */
 	void SerializeHeader();
-
-	/** Serializes the level's data into the structured archive */
 	void SerializeLevel(const TSoftObjectPtr<ULevel>& Level);
-
-	/** Serializes the streaming level's data into the structured archive */
 	void SerializeStreamingLevel(const TSoftObjectPtr<ULevelStreaming>& StreamingLevel);
 
 private:
-	/**
-	 * Serializes all the actors that the SerializeSubsystem is keeping track
-	 * of. On load, it will also pre-spawn any actors and map any actors with
-	 * Spawn IDs before running the actual serialization step.
-	 */
-	void
-	SerializeActors(ULevel* Level, TSet<TWeakObjectPtr<AActor>>& SaveGameActors, FStructuredArchive::FSlot& ActorsSlot);
-
-	/**
-	 * Serializes all the actor components that implements interface
-	 * SaveGameObject.
-	 */
+	void SerializeActors(ULevel* Level, TSet<TWeakObjectPtr<AActor>>& SaveGameActors, FStructuredArchive::FSlot& ActorsSlot);
 	void SerializeActorComponents(AActor*& Actor, FStructuredArchive::FSlot& ActorSlot);
-
-	/** Serializes any destroyed level actors. On load, level actors will exist
-	 * again, so this will re-destroy them */
-	void SerializeDestroyedActors(ULevel* Level,
-	                              FActorsStruct& ActorsRecord,
-	                              FStructuredArchive::FSlot& DestroyedActorsSlot);
-
-	/**
-	 * Serialized at the end of the archive, the versions are useful for
-	 * marshaling old data. These also contain the versions added by
-	 * USaveGameFunctionLibrary::UseCustomVersion.
-	 */
+	void SerializeDestroyedActors(ULevel* Level, FActorsStruct& ActorsRecord, FStructuredArchive::FSlot& DestroyedActorsSlot);
 	void SerializeVersions();
 
-	/**
-	 * Serializes the actor's data into the structured archive.
-	 * This data always comprises the actor's object name, and optionally its:
-	 * - Class: If the actor was spawned (so that it can be spawned again)
-	 * - SpawnID: If the actor implements ISaveGameSpawnActor. A unique identifier
-	 *to map the data back to an already spawned actor (like the player's
-	 *character)
-	 *
-	 * It also takes a lambda function that can optionally do some work or
-	 *serialization. Ultimately, once this lambda function is complete,
-	 *SerializeActor will automatically seek the archive to the end of the actor's
-	 *data.
-	 *
-	 * @param ActorMap The structured map that the actor data will be written to
-	 * @param Actor The live actor that will be serialized
-	 * @param BodyFunction A lambda function that will optionally do some work,
-	 *whether that be serializing or spawning
-	 */
-	void
-	SerializeActor(FStructuredArchive::FMap& ActorMap,
-	               AActor*& Actor,
-	               TFunction<void(const FString&, const FSoftClassPath&, const FGuid&, FStructuredArchive::FSlot&)>&&
-	                   BodyFunction);
+	// BodyFunction is called after header fields (ActorName, Class, SpawnID) are read/written.
+	// Binary mode: also writes/reads DataSize around BodyFunction for skip-on-corruption.
+	void SerializeActor(FStructuredArchive::FMap& ActorMap,
+	                    AActor*& Actor,
+	                    TFunction<void(const FString&, const FSoftClassPath&, const FGuid&, FStructuredArchive::FSlot&)>&& BodyFunction);
 
-	/**
-	 * Serializes the actor component data into the structured archive.
-	 * This data always comprises the actor's component object name and its data.
-	 *
-	 * @param ComponentsMap The structured map that the actor component data will
-	 *be written to
-	 * @param ActorComponent The live actor components that will be serialized
-	 */
-	void SerializeActorComponent(FStructuredArchive::FMap& ComponentsMap,
-	                             TSoftObjectPtr<UActorComponent>& ActorComponent);
-
-	/** Serializes an actor's script properties, components, and custom data. */
+	void SerializeActorComponent(FStructuredArchive::FMap& ComponentsMap, TSoftObjectPtr<UActorComponent>& ActorComponent);
 	void SerializeActorData(AActor* Actor, FStructuredArchive::FSlot& ActorSlot);
-
-	/** Resolves SerializeSubsystem and calls FinalizeLoad with the given result. */
 	void BroadcastLoadFailed(ESaveGameLoadResult Result);
 
-	// Internal Variables
 private:
-	// The game instance subsystem that manages the Serialization
 	const TWeakObjectPtr<USerializeSubsystem> SerializeSubsystem;
 
-	// The data that will be serialized
-	TArray<uint8> Data = {};
-
-	// The archive that will be used to serialize the data
-	FSaveGameMemoryArchive Archive;
-	// The proxy archive that will be an abstraction layer for the archive to
-	// resolve pointers
+	// Declaration order matters: Data must be initialized before Archive (Archive wraps Data),
+	// and Archive before ProxyArchive, ProxyArchive before Formatter, Formatter before StructuredArchive.
+	// For JSON loading, Data must also be populated before Formatter construction
+	// because FJsonArchiveInputFormatter parses the JSON eagerly in its constructor.
+	TArray<uint8>                     Data = {};
+	FSaveGameMemoryArchive            Archive;
 	TSaveGameProxyArchive<bIsLoading> ProxyArchive;
-	// The formatter that will be used to serialize the data (binary or JSON)
-	FSaveGameFormatter Formatter;
-	// The structured archive that will be an abstraction layer for the proxy
-	// archive to allow for structured serialization
-	FStructuredArchive StructuredArchive;
+	FSaveGameFormatter                Formatter;
+	FStructuredArchive                StructuredArchive;
+	FStructuredArchive::FSlot         RootSlot;
+	FStructuredArchive::FRecord       RootRecord;
 
-	// The root slot of the structured archive
-	FStructuredArchive::FSlot RootSlot;
-	// The root record of the structured archive
-	FStructuredArchive::FRecord RootRecord;
-
-	// Offsets
+	// VersionsOffset: position of the version table inside the binary blob.
+	// Written into the header so DeserializeHeaderData can seek directly to version
+	// data and check compatibility before decompressing the (potentially large) actor blobs.
 	uint64 VersionOffset;
 	uint64 HeaderOffset;
 

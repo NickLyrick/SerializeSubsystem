@@ -7,18 +7,19 @@
 #include "Misc/PackageName.h"
 #include "UObject/Package.h"
 
-// Struct to hold data for a single streaming level.
 struct FActorsStruct
 {
-	TSet<TWeakObjectPtr<AActor>> SaveGame = {};
-	TSet<FSoftObjectPath> Destroyed = {};
+	TSet<TWeakObjectPtr<AActor>> SaveGame   = {};
+	TSet<FSoftObjectPath>        Destroyed  = {};
 };
 
 struct FStreamingLevelStruct
 {
 	FString LevelName;
 
-	bool bIsLevelLoaded = false;
+	// Both flags are persisted: a level can be loaded-but-not-visible (e.g., pre-warming).
+	// Restoring both independently recreates the exact visibility state from the save.
+	bool bIsLevelLoaded  = false;
 	bool bIsLevelVisible = false;
 
 	TSharedPtr<FActorsStruct> Actors = MakeShared<FActorsStruct>();
@@ -58,6 +59,8 @@ struct FLevelStruct
 	{
 		for (const TPair StreamingLevel : StreamingLevels)
 		{
+			// GetWorldAssetPackageName() returns FString; GetFName() returns FName.
+			// Explicit FName() conversion is required — FString == FName does not compile.
 			if (FName(*StreamingLevel.Key->GetWorldAssetPackageName()) == Level->GetOutermost()->GetFName())
 			{
 				return StreamingLevel.Key;

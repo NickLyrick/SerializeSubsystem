@@ -6,7 +6,7 @@
 
 #include "SerializationStructs.generated.h"
 
-// Struct to hold data for a single streaming level.
+// Per-streaming-level serialized state: actor binary blob + visibility flags.
 USTRUCT(BlueprintType, Blueprintable)
 struct FStreamingLevelData
 {
@@ -43,6 +43,8 @@ struct FLevelData
 	UPROPERTY(BlueprintReadWrite, meta = (HideInDetailPanel), Category = "Serialization Data")
 	TArray<uint8> Data = {};
 
+	// TSoftObjectPtr as map key: stores a path string, so equality is by path — stable across frames
+	// and safe to use as a TMap key (unlike raw UObject* which can be GC'd between frames).
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Serialization Data")
 	TMap<TSoftObjectPtr<ULevelStreaming>, FStreamingLevelData> StreamingLevels = {};
 };

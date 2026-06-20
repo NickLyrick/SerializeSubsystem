@@ -94,11 +94,9 @@ void USerializeSubsystem::Load(FSerializedData Data)
 	}
 
 	{
-		// IMPORTANT:
-		// This pointer is used to keep the serializer alive until the end of the
-		// load. We use seamless travel to load the persistent level, that is kinda
-		// asynchronous. We trigger loading here but the level will be serialized in
-		// the OnMapLoad event.
+		// CurrentSerializer keeps the serializer alive across the asynchronous SeamlessTravel:
+		// we trigger level loading here, but OnMapLoad (where actors are actually deserialized)
+		// fires on a future frame — the serializer must not be GC'd in between.
 		const TSharedRef<TSaveGameSerializer<true>> BinarySerializer = MakeShared<TSaveGameSerializer<true>>(this);
 		CurrentSerializer = BinarySerializer.ToSharedPtr();
 
@@ -304,6 +302,8 @@ void USerializeSubsystem::OnLevelRemovedFromWorld(ULevel* Level, UWorld* World)
 	if (!IsValid(Level) || GetWorld() != World)
 		return;
 
+	// SeamlessTravel we initiated calls PreLevelRemovedFromWorld before the new map is ready.
+	// Without this guard, unloading the old level would overwrite its serialized data with an empty snapshot.
 	if (IsLoadingSaveGame())
 		return;
 

@@ -16,19 +16,19 @@ struct FSaveGameVersionInfo
 public:
 	FSaveGameVersionInfo()
 	    : ID(FGuid::NewGuid()),
-	      Enum(nullptr)
+	      VersionEnum(nullptr)
 	{
 	}
 
-	/** A unique ID for this version, used by the Custom Version Container in a
-	 * save game archive. Do not change! */
+	/** Stable unique ID for this version slot — used as the FCustomVersion GUID in save archives.
+	 *  Generated once; changing it makes all existing saves with this version unreadable. */
 	UPROPERTY(VisibleAnywhere, AdvancedDisplay, Category = "Save Game")
 	FGuid ID;
 
-	/** The enum to use for versioning. System will use last value as the "latest
-	 * version" number. Do not change! */
+	/** Enum whose last value is treated as the current version number.
+	 *  Changing the enum's last value bumps the version; never remove existing entries. */
 	UPROPERTY(EditAnywhere, Category = "Save Game")
-	TObjectPtr<UEnum> Enum;
+	TObjectPtr<UEnum> VersionEnum;
 };
 
 UCLASS(config = Game, defaultconfig, meta = (DisplayName = "Save Game"))
@@ -79,5 +79,6 @@ public:
 	TArray<FInstancedStruct> Migrations;
 
 private:
+	// mutable: GetVersionId() is const (called from CDO context) but populates this cache lazily on first call.
 	mutable TMap<TObjectPtr<UEnum>, FGuid> CachedVersions;
 };

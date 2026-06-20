@@ -17,8 +17,8 @@ DEFINE_LOG_CATEGORY_STATIC(LogSaveGame, Log, All);
 
 #define LEVEL_SUBPATH_PREFIX TEXT("PersistentLevel.")
 
-template <bool bLoading>
-FORCEINLINE_DEBUGGABLE bool SerializeCompressedData(FArchive& Ar, TArray<uint8>& Data);
+template <bool bIsLoading>
+FORCEINLINE_DEBUGGABLE bool SerializeCompressedData(FArchive& Archive, TArray<uint8>& UncompressedData);
 
 // Fixed-size manifest written at the front of every binary blob (before compressed data).
 // Readable without decompression — allows fast rejection of incompatible or corrupt files.
@@ -31,15 +31,16 @@ struct FSaveGameManifest
 };
 static_assert(sizeof(FSaveGameManifest) == 12, "FSaveGameManifest layout changed");
 
-// Save path: compresses Data, prepends manifest, returns the full blob.
-static TArray<uint8> CompressAndWrapBlob(const TArray<uint8>& Data)
+// Save path: compresses UncompressedData, prepends manifest, returns the full blob.
+static TArray<uint8> CompressAndWrapBlob(const TArray<uint8>& UncompressedData)
 {
 	TArray<uint8> Compressed;
-	FMemoryWriter CompressAr(Compressed);
-	SerializeCompressedData<false>(CompressAr, const_cast<TArray<uint8>&>(Data));
+	FMemoryWriter CompressWriter(Compressed);
+	SerializeCompressedData<false>(CompressWriter, const_cast<TArray<uint8>&>(UncompressedData));
 
 	FSaveGameManifest Manifest;
 	Manifest.PluginVersion = static_cast<int32>(FSaveGameVersion::LatestVersion);
+	// CRC32: fast non-cryptographic integrity check, false-positive rate ~1/2^32 — sufficient for save files.
 	Manifest.DataCRC = FCrc::MemCrc32(Compressed.GetData(), Compressed.Num());
 
 	TArray<uint8> Blob;
@@ -86,39 +87,39 @@ static ESaveGameLoadResult ValidateManifest(const TArray<uint8>& Blob, FArchive&
 	return ESaveGameLoadResult::Success;
 }
 
-template <bool bLoading>
-FORCEINLINE_DEBUGGABLE bool SerializeCompressedData(FArchive& Ar, TArray<uint8>& Data)
+template <bool bIsLoading>
+FORCEINLINE_DEBUGGABLE bool SerializeCompressedData(FArchive& Archive, TArray<uint8>& UncompressedData)
 {
-	check(Ar.IsLoading() == bLoading);
+	check(Archive.IsLoading() == bIsLoading);
 
 	int64 UncompressedSize = 0;
-	if constexpr (!bLoading)
+	if constexpr (!bIsLoading)
 	{
-		UncompressedSize = Data.Num();
+		UncompressedSize = UncompressedData.Num();
 	}
 
-	Ar << UncompressedSize;
+	Archive << UncompressedSize;
 
-	if constexpr (bLoading)
+	if constexpr (bIsLoading)
 	{
-		if (Ar.IsError() || UncompressedSize <= 0 || UncompressedSize > static_cast<int64>(MAX_int32))
+		if (Archive.IsError() || UncompressedSize <= 0 || UncompressedSize > static_cast<int64>(MAX_int32))
 		{
 			UE_LOG(LogSaveGame,
 			       Error,
 			       TEXT("Decompression failed — invalid or unreadable uncompressed "
 			            "size (%lld). Save file may be corrupted or truncated."),
 			       UncompressedSize);
-			Ar.SetError();
+			Archive.SetError();
 			return false;
 		}
-		Data.SetNumUninitialized(static_cast<int32>(UncompressedSize));
+		UncompressedData.SetNumUninitialized(static_cast<int32>(UncompressedSize));
 	}
 
-	Ar.SerializeCompressed(Data.GetData(), UncompressedSize, NAME_Zlib);
+	Archive.SerializeCompressed(UncompressedData.GetData(), UncompressedSize, NAME_Zlib);
 
-	if constexpr (bLoading)
+	if constexpr (bIsLoading)
 	{
-		if (Ar.IsError())
+		if (Archive.IsError())
 		{
 			UE_LOG(LogSaveGame,
 			       Error,
@@ -306,6 +307,8 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::InitiateLevelLoad(const FSt
 		return;
 	}
 
+	// Register before SeamlessTravel: the engine initiates the journey asynchronously,
+	// but OnMapLoad can fire as early as the next tick — subscribing after the call risks missing it.
 	FCoreUObjectDelegates::PostLoadMapWithWorld.AddThreadSafeSP(this, &TSaveGameSerializer::OnMapLoad);
 
 	World->SeamlessTravel(LevelName, true);
@@ -712,9 +715,9 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActors(ULevel* Lev
 template <bool bIsLoading, bool bIsTextFormat>
 void TSaveGameSerializer<bIsLoading, bIsTextFormat>::BroadcastLoadFailed(ESaveGameLoadResult Result)
 {
-	if (USerializeSubsystem* Sub = SerializeSubsystem.Get())
+	if (USerializeSubsystem* Subsystem = SerializeSubsystem.Get())
 	{
-		Sub->FinalizeLoad(Result);
+		Subsystem->FinalizeLoad(Result);
 	}
 }
 
@@ -726,20 +729,22 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActorData(AActor* 
 
 	if constexpr (bIsLoading)
 	{
-		if (USerializeSubsystem* Sub = SerializeSubsystem.Get())
+		// SetDefaultValue runs post-deserialization: ImportText_Direct requires a fully constructed
+		// UObject with a valid CDO, which is not available while the FStructuredArchive is open.
+		if (USerializeSubsystem* Subsystem = SerializeSubsystem.Get())
 		{
-			for (int32 MigIdx = 0; MigIdx < Sub->PendingDefaultMigrations.Num(); ++MigIdx)
+			for (int32 StepIndex = 0; StepIndex < Subsystem->PendingDefaultMigrations.Num(); ++StepIndex)
 			{
-				TObjectPtr<UClass>& TargetClass = Sub->PendingDefaultMigrationClasses[MigIdx];
+				TObjectPtr<UClass>& TargetClass = Subsystem->PendingDefaultMigrationClasses[StepIndex];
 				if (!TargetClass)
 				{
-					TargetClass = Sub->PendingDefaultMigrations[MigIdx].OwnerClass.TryLoadClass<UObject>();
+					TargetClass = Subsystem->PendingDefaultMigrations[StepIndex].OwnerClass.TryLoadClass<UObject>();
 				}
 				if (!TargetClass || !Actor->IsA(TargetClass))
 					continue;
-				const FMigration_SetDefaultValue& Migration = Sub->PendingDefaultMigrations[MigIdx];
-				FProperty* Prop = FindFProperty<FProperty>(Actor->GetClass(), Migration.PropertyName);
-				if (!Prop)
+				const FMigration_SetDefaultValue& Migration = Subsystem->PendingDefaultMigrations[StepIndex];
+				FProperty* Property = FindFProperty<FProperty>(Actor->GetClass(), Migration.PropertyName);
+				if (!Property)
 				{
 					UE_LOG(LogSaveGame,
 					       Warning,
@@ -748,9 +753,9 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActorData(AActor* 
 					       *Actor->GetClass()->GetName());
 					continue;
 				}
-				void* PropData = Prop->ContainerPtrToValuePtr<void>(Actor);
+				void* PropertyData = Property->ContainerPtrToValuePtr<void>(Actor);
 				const TCHAR* ImportResult =
-				    Prop->ImportText_Direct(*Migration.ExportedDefaultValue, PropData, Actor, PPF_None);
+				    Property->ImportText_Direct(*Migration.ExportedDefaultValue, PropertyData, Actor, PPF_None);
 				if (!ImportResult)
 				{
 					UE_LOG(LogSaveGame,
@@ -901,8 +906,8 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeVersions()
 		{
 			if (const FMigration_RenameField* Rename = StepInstance.GetPtr<FMigration_RenameField>())
 			{
-				const FCustomVersion* Cv = VersionContainer.GetVersion(Rename->VersionGuid);
-				if (Cv && Cv->Version >= Rename->TargetVersion)
+				const FCustomVersion* CustomVersion = VersionContainer.GetVersion(Rename->VersionGuid);
+				if (CustomVersion && CustomVersion->Version >= Rename->TargetVersion)
 					continue;
 				if (Rename->OldPropertyName.IsNone() || Rename->NewPropertyName.IsNone() ||
 				    Rename->OwnerClassName.IsNone())
@@ -918,13 +923,15 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeVersions()
 			}
 			else if (const FMigration_SetDefaultValue* Default = StepInstance.GetPtr<FMigration_SetDefaultValue>())
 			{
-				const FCustomVersion* Cv = VersionContainer.GetVersion(Default->VersionGuid);
-				if (Cv && Cv->Version >= Default->TargetVersion)
+				const FCustomVersion* CustomVersion = VersionContainer.GetVersion(Default->VersionGuid);
+				if (CustomVersion && CustomVersion->Version >= Default->TargetVersion)
 					continue;
-				if (USerializeSubsystem* Sub = SerializeSubsystem.Get())
+				// Deferred to SerializeActorData: ImportText_Direct needs a fully constructed UObject,
+				// which is not yet available while the archive header is being parsed here.
+				if (USerializeSubsystem* Subsystem = SerializeSubsystem.Get())
 				{
-					Sub->PendingDefaultMigrations.Add(*Default);
-					Sub->PendingDefaultMigrationClasses.Add(Default->OwnerClass.TryLoadClass<UObject>());
+					Subsystem->PendingDefaultMigrations.Add(*Default);
+					Subsystem->PendingDefaultMigrationClasses.Add(Default->OwnerClass.TryLoadClass<UObject>());
 					UE_LOG(LogSaveGame,
 					       Log,
 					       TEXT("Migration: queued default value for %s::%s"),
@@ -992,11 +999,13 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActor(
 		GuidSlot.GetValue() << SpawnID;
 	}
 
+	// DataSize enables corruption resilience: if an actor's data is malformed during loading,
+	// Seek(BeginDataPosition + DataSize) skips it cleanly and continues with the next actor.
+	// Not stored in JSON mode — FJsonArchiveOutputFormatter does not support seek.
 	uint64 DataSize;
 
 	if (!bIsTextFormat)
 	{
-		// Pre-write how much data (in bytes) was serialized for this actor
 		Archive << DataSize;
 	}
 
@@ -1008,7 +1017,6 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActor(
 	{
 		if (bIsLoading)
 		{
-			// Skip our data and onto the next actor
 			Archive.Seek(BeginDataPosition + DataSize);
 		}
 		else
@@ -1016,12 +1024,10 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActor(
 			const uint64 EndDataPosition = Archive.Tell();
 			DataSize = EndDataPosition - BeginDataPosition;
 
-			// Store the amount of data we've serialized (in bytes), back before the
-			// actual data
+			// Patch the DataSize placeholder we wrote before the actor's data.
 			Archive.Seek(BeginDataPosition - sizeof(DataSize));
 			Archive << DataSize;
 
-			// Go back to our current position
 			Archive.Seek(EndDataPosition);
 		}
 	}

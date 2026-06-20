@@ -58,15 +58,13 @@ public:
 	/**
 	 * Serialize a property to/from the specified archive.
 	 *
-	 * OnSave: Store the value of the property to the archive (if bSave is true)
-	 * OnLoad: Read the archive, if the value exists, load by reference into the
-	 * property connected to Value
+	 * CustomThunk + CustomStructureParam: Blueprint's generic thunk cannot dispatch
+	 * wildcard UPARAM(ref) types — execSerializeItem (in the .cpp) reads the actual
+	 * FProperty from the Blueprint stack and handles any struct or primitive type.
 	 *
-	 * @param Archive The archive that the save game is serializing
-	 * @param Value The property that will be serialized (by reference)
-	 * @param bSave If true, will save this property, otherwise not if false. Not
-	 * used when loading.
-	 * @return true if the property was serialized
+	 * OnSave: stores Value to the archive (when bSave is true).
+	 * OnLoad: reads from the archive into Value if the field exists.
+	 * Returns false if the field is absent (e.g., new field on an old save).
 	 */
 	UFUNCTION(BlueprintCallable,
 	          CustomThunk,
@@ -76,14 +74,14 @@ public:
 	DECLARE_FUNCTION(execSerializeItem);
 
 	/**
-	 * Serializes the specified version.
+	 * Registers and serializes a custom version tied to VersionEnum.
 	 *
-	 * OnSave: Stores the latest value of the version to the archive.
-	 * OnLoad: Reads the version from the save game archive (if any)
+	 * OnSave: writes the current (latest) version number into the archive.
+	 * OnLoad: reads the stored version number.
 	 *
-	 * @param Archive The archive that the save game is serializing
-	 * @param VersionEnum The enum of the version we want to serialize
-	 * @return The version that was serialized (-1 if not exist or no version)
+	 * Returns INDEX_NONE (-1) when the save pre-dates this versioning scheme
+	 * (the GUID was not in the archive at all). Callers should treat -1 as version 0
+	 * and apply all migrations unconditionally.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Serialize Subsystem | Serialize")
 	static int32 UseCustomVersion(UPARAM(ref) FSaveGameArchive& Archive, const UEnum* VersionEnum);

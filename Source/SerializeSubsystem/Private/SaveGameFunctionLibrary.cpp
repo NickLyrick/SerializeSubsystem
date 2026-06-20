@@ -62,7 +62,7 @@ bool USaveGameFunctionLibrary::SerializeActorTransform(FSaveGameArchive& Archive
 		const bool bIsMovable = Actor->IsRootComponentMovable();
 		const bool bIsLoading = Archive.GetRecord().GetUnderlyingArchive().IsLoading();
 
-		// Save into a slot only if the actor is movable
+		// Skip saving for non-movable actors: their transform is baked into the level.
 		return (bIsLoading || bIsMovable) &&
 		       Archive.SerializeField(TEXT("ActorTransform"),
 		                              [&](FStructuredArchive::FSlot Slot)
@@ -74,12 +74,10 @@ bool USaveGameFunctionLibrary::SerializeActorTransform(FSaveGameArchive& Archive
 				                              ActorTransform = Actor->GetActorTransform();
 			                              }
 
-			                              // Serialize the transform
 			                              Slot << ActorTransform;
 
 			                              if (bIsLoading && bIsMovable)
 			                              {
-				                              // If the actor is movable, set its transform
 				                              Actor->SetActorTransform(
 				                                  ActorTransform, false, nullptr, ETeleportType::TeleportPhysics);
 			                              }
@@ -105,7 +103,6 @@ bool USaveGameFunctionLibrary::SerializeActorHiddenInGame(FSaveGameArchive& Arch
 				                              bIsHiddenInGame = Actor->IsHidden();
 			                              }
 
-			                              // Serialize the HiddenInGame value
 			                              Slot << bIsHiddenInGame;
 
 			                              if (bIsLoading)
@@ -120,16 +117,19 @@ bool USaveGameFunctionLibrary::SerializeActorHiddenInGame(FSaveGameArchive& Arch
 
 bool USaveGameFunctionLibrary::SerializeItem(FSaveGameArchive& Archive, int32& Value, bool bSave)
 {
-	checkf(false, TEXT("Shouldn't call this natively!"));
+	// The UFUNCTION body is never called natively. Blueprint always routes through execSerializeItem
+	// (CustomThunk), which reads the actual FProperty type from the Blueprint execution stack.
+	checkf(false, TEXT("SerializeItem must be called from Blueprint — native call is not supported."));
 	return false;
 }
 
 DEFINE_FUNCTION(USaveGameFunctionLibrary::execSerializeItem)
 {
-	// Get a reference to our archive that contains the record
 	P_GET_STRUCT_REF(FSaveGameArchive, Archive);
 
-	// This will step into the property that we've attached
+	// Step past the wildcard Value pin to get the actual FProperty and its address on the stack.
+	// This is the reason CustomThunk is needed: the standard generated thunk cannot handle
+	// UPARAM(ref) with CustomStructureParam (wildcard) types.
 	Stack.StepCompiledIn<FStructProperty>(nullptr);
 	const FProperty* ValueProperty = Stack.MostRecentProperty;
 	uint8* ValueAddress = Stack.MostRecentPropertyAddress;

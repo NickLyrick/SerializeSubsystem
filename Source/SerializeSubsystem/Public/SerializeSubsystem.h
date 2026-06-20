@@ -27,7 +27,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnSaveGameLoadCompleted, ESaveGameL
  * The subsystem that serializes and deserializes the game world.
  */
 UCLASS(DisplayName = "Serialize Subsystem", Category = "Serialize Subsystem Plugin")
-class USerializeSubsystem : public UGameInstanceSubsystem
+class SERIALIZESUBSYSTEM_API USerializeSubsystem : public UGameInstanceSubsystem
 {
 	GENERATED_BODY()
 
@@ -86,13 +86,21 @@ protected:
 	void FinalizeLoad(ESaveGameLoadResult Result);
 
 private:
+	// TSaveGameSerializer writes directly into PersistentLevelRecord and SerializedData to avoid
+	// extra copies — friend access is intentional, not an abstraction leak.
 	template <bool, bool>
 	friend class TSaveGameSerializer;
+
+	// SharedPtr: SeamlessTravel is asynchronous; the serializer must outlive the current frame
+	// until OnActorsInitialized fires in the new map.
 	TSharedPtr<class FSaveGameSerializer, ESPMode::ThreadSafe> CurrentSerializer;
 
-	TSharedPtr<FLevelStruct> PersistentLevelRecord;
+	TSharedPtr<FLevelStruct>   PersistentLevelRecord;
 	TSharedPtr<FSerializedData> SerializedData = MakeShared<FSerializedData>();
 
+	// Parallel arrays (index N in both refers to the same migration step).
+	// Populated in SerializeVersions; applied per-actor in SerializeActorData after
+	// deserialization, because ImportText_Direct requires a fully constructed UObject.
 	TArray<FMigration_SetDefaultValue> PendingDefaultMigrations;
-	TArray<TObjectPtr<UClass>> PendingDefaultMigrationClasses;
+	TArray<TObjectPtr<UClass>>         PendingDefaultMigrationClasses;
 };
