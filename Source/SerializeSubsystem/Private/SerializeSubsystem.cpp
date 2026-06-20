@@ -266,9 +266,6 @@ void USerializeSubsystem::OnLevelAddedToWorld(ULevel* Level, UWorld* World)
 	if (!StreamingLevel.IsValid())
 		return;
 
-	if (!StreamingLevel.IsValid())
-		return;
-
 	FString LevelName = GetWorld()->GetCurrentLevel()->GetOutermost()->GetLoadedPath().GetPackageName();
 
 	for (AActor* Actor : Level->Actors)
@@ -305,6 +302,9 @@ void USerializeSubsystem::OnLevelAddedToWorld(ULevel* Level, UWorld* World)
 void USerializeSubsystem::OnLevelRemovedFromWorld(ULevel* Level, UWorld* World)
 {
 	if (!IsValid(Level) || GetWorld() != World)
+		return;
+
+	if (IsLoadingSaveGame())
 		return;
 
 	const TSoftObjectPtr<ULevel> LevelCurrent = GetWorld()->GetCurrentLevel();

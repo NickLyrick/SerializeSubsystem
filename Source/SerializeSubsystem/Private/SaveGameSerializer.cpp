@@ -564,13 +564,21 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActors(ULevel* Lev
 				const FGuid SpawnID = ISaveGameSpawnActor::Execute_GetSpawnID(Actor);
 				if (SpawnID.IsValid())
 				{
-					ensureMsgf(!SpawnIDs.Contains(SpawnID),
-					           TEXT("SerializeSubsystem: SpawnID collision — %s and %s "
-					                "share SpawnID %s."),
-					           *Actor->GetName(),
-					           *SpawnIDs[SpawnID]->GetName(),
-					           *SpawnID.ToString());
-					SpawnIDs.Add(SpawnID, Actor);
+					if (SpawnIDs.Contains(SpawnID))
+					{
+						UE_LOG(LogSaveGame,
+						       Error,
+						       TEXT("SerializeSubsystem: SpawnID collision — %s and %s share "
+						            "SpawnID %s. Second actor will not receive save data."),
+						       *SpawnIDs[SpawnID]->GetName(),
+						       *Actor->GetName(),
+						       *SpawnID.ToString());
+						ensureAlwaysMsgf(false, TEXT("SpawnID collision detected — see log above."));
+					}
+					else
+					{
+						SpawnIDs.Add(SpawnID, Actor);
+					}
 				}
 			}
 		}
@@ -741,7 +749,17 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActorData(AActor* 
 					continue;
 				}
 				void* PropData = Prop->ContainerPtrToValuePtr<void>(Actor);
-				Prop->ImportText_Direct(*Migration.ExportedDefaultValue, PropData, Actor, PPF_None);
+				const TCHAR* ImportResult =
+				    Prop->ImportText_Direct(*Migration.ExportedDefaultValue, PropData, Actor, PPF_None);
+				if (!ImportResult)
+				{
+					UE_LOG(LogSaveGame,
+					       Error,
+					       TEXT("Migration: failed to parse value '%s' for %s::%s — skipping."),
+					       *Migration.ExportedDefaultValue,
+					       *Actor->GetClass()->GetName(),
+					       *Migration.PropertyName.ToString());
+				}
 			}
 		}
 	}
@@ -901,7 +919,7 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeVersions()
 			else if (const FMigration_SetDefaultValue* Default = StepInstance.GetPtr<FMigration_SetDefaultValue>())
 			{
 				const FCustomVersion* Cv = VersionContainer.GetVersion(Default->VersionGuid);
-				if (!Cv || Cv->Version >= Default->TargetVersion)
+				if (Cv && Cv->Version >= Default->TargetVersion)
 					continue;
 				if (USerializeSubsystem* Sub = SerializeSubsystem.Get())
 				{
