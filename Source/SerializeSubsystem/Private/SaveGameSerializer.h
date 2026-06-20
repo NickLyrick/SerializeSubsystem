@@ -200,11 +200,4 @@ private:
   // Offsets
   uint64 VersionOffset;
   uint64 HeaderOffset;
-
-  // SetDefaultValue migrations queued during SerializeVersions; applied in
-  // SerializeActorData after each actor's properties are deserialized.
-  // PendingDefaultMigrationClasses[i] is the UClass resolved once at queue
-  // time to avoid per-actor TryLoadClass calls.
-  TArray<FMigration_SetDefaultValue> PendingDefaultMigrations;
-  TArray<TObjectPtr<UClass>> PendingDefaultMigrationClasses;
 };
