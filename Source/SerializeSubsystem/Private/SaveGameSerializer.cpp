@@ -3,11 +3,12 @@
 #include "Engine/Level.h"
 #include "Misc/Crc.h"
 #include "Misc/EngineVersion.h"
-#include "PlatformFeatures.h"
+#include "Misc/FileHelper.h"
+#include "Misc/PackageName.h"
+#include "Misc/Paths.h"
 #include "SaveGameFunctionLibrary.h"
 #include "SaveGameObject.h"
 #include "SaveGameSettings.h"
-#include "SaveGameSystem.h"
 #include "SaveGameVersion.h"
 #include "Serialization/CustomVersion.h"
 #include "UObject/CoreRedirects.h"
@@ -180,10 +181,10 @@ TArray<uint8> TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeHeaderDat
 		return CompressAndWrapBlob(Data);
 	}
 
-	ISaveGameSystem* SaveSystem = IPlatformFeaturesModule::Get().GetSaveGameSystem();
-	if (bIsTextFormat && SaveSystem)
+	if (bIsTextFormat)
 	{
-		SaveSystem->SaveGame(false, TEXT("Header.json"), 0, Data);
+		const FString JsonPath = FPaths::ProjectSavedDir() / TEXT("SaveGames") / TEXT("Header.json");
+		FFileHelper::SaveArrayToFile(Data, *JsonPath);
 	}
 
 	return Data;
@@ -279,11 +280,11 @@ TArray<uint8> TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeLevelData
 		return CompressAndWrapBlob(Data);
 	}
 
-	ISaveGameSystem* SaveSystem = IPlatformFeaturesModule::Get().GetSaveGameSystem();
-	if (bIsTextFormat && SaveSystem)
+	if (bIsTextFormat)
 	{
-		const FString SaveName = FPackageName::GetShortName(Level->GetOutermost()->GetName()) + ".json";
-		SaveSystem->SaveGame(false, *SaveName, 0, Data);
+		const FString SaveName = FPackageName::GetShortName(Level->GetOutermost()->GetName()) + TEXT(".json");
+		const FString JsonPath = FPaths::ProjectSavedDir() / TEXT("SaveGames") / SaveName;
+		FFileHelper::SaveArrayToFile(Data, *JsonPath);
 	}
 
 	return Data;
@@ -380,11 +381,11 @@ TArray<uint8> TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeStreaming
 		return CompressAndWrapBlob(Data);
 	}
 
-	ISaveGameSystem* SaveSystem = IPlatformFeaturesModule::Get().GetSaveGameSystem();
-	if (bIsTextFormat && SaveSystem)
+	if (bIsTextFormat)
 	{
-		const FString SaveName = FPackageName::GetShortName(StreamingLevel->GetWorldAssetPackageName()) + ".json";
-		SaveSystem->SaveGame(false, *SaveName, 0, Data);
+		const FString SaveName = FPackageName::GetShortName(StreamingLevel->GetWorldAssetPackageName()) + TEXT(".json");
+		const FString JsonPath = FPaths::ProjectSavedDir() / TEXT("SaveGames") / SaveName;
+		FFileHelper::SaveArrayToFile(Data, *JsonPath);
 	}
 
 	return Data;

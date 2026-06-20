@@ -12,13 +12,15 @@ struct FStreamingLevelData
 {
 	GENERATED_BODY()
 
-	UPROPERTY(BlueprintReadOnly, Category = "Serialization Data")
+	// SaveGame required: UGameplayStatics::SaveGameToSlot uses ArIsSaveGame=true and skips
+	// any property without this flag, even if the owning UPROPERTY(SaveGame) field is included.
+	UPROPERTY(SaveGame, BlueprintReadOnly, Category = "Serialization Data")
 	bool bIsLoaded = false;
 
-	UPROPERTY(BlueprintReadOnly, Category = "Serialization Data")
+	UPROPERTY(SaveGame, BlueprintReadOnly, Category = "Serialization Data")
 	bool bIsVisible = false;
 
-	UPROPERTY(BlueprintReadWrite, meta = (HideInDetailPanel), Category = "Serialization Data")
+	UPROPERTY(SaveGame, BlueprintReadWrite, meta = (HideInDetailPanel), Category = "Serialization Data")
 	TArray<uint8> Data = {};
 
 	void SaveStreamingLevelState(const TSoftObjectPtr<ULevelStreaming>& StreamingLevel)
@@ -40,12 +42,12 @@ struct FLevelData
 {
 	GENERATED_BODY()
 
-	UPROPERTY(BlueprintReadWrite, meta = (HideInDetailPanel), Category = "Serialization Data")
+	UPROPERTY(SaveGame, BlueprintReadWrite, meta = (HideInDetailPanel), Category = "Serialization Data")
 	TArray<uint8> Data = {};
 
 	// TSoftObjectPtr as map key: stores a path string, so equality is by path — stable across frames
 	// and safe to use as a TMap key (unlike raw UObject* which can be GC'd between frames).
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Serialization Data")
+	UPROPERTY(SaveGame, EditAnywhere, BlueprintReadWrite, Category = "Serialization Data")
 	TMap<TSoftObjectPtr<ULevelStreaming>, FStreamingLevelData> StreamingLevels = {};
 };
 
@@ -55,12 +57,12 @@ struct FSerializedData
 {
 	GENERATED_BODY()
 
-	UPROPERTY(BlueprintReadWrite, meta = (HideInDetailPanel), Category = "Serialization Data")
+	UPROPERTY(SaveGame, BlueprintReadWrite, meta = (HideInDetailPanel), Category = "Serialization Data")
 	TArray<uint8> Header = {};
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Serialization Data")
+	UPROPERTY(SaveGame, EditAnywhere, BlueprintReadWrite, Category = "Serialization Data")
 	FString LevelName;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Serialization Data")
+	UPROPERTY(SaveGame, EditAnywhere, BlueprintReadWrite, Category = "Serialization Data")
 	TMap<FString, FLevelData> Levels = {};
 };
