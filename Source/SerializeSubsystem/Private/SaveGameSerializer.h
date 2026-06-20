@@ -10,6 +10,7 @@
 #include "Components/ActorComponent.h"
 #include "Engine/Level.h"
 #include "Engine/LevelStreaming.h"
+#include "SaveGameMigrationStep.h"
 #include "SaveGameProxyArchive.h"
 #include "Serialization/MemoryReader.h"
 #include "Serialization/MemoryWriter.h"
@@ -199,4 +200,8 @@ private:
   // Offsets
   uint64 VersionOffset;
   uint64 HeaderOffset;
+
+  // SetDefaultValue migrations queued during SerializeVersions; applied in
+  // SerializeActorData after each actor's properties are deserialized.
+  TArray<FMigration_SetDefaultValue> PendingDefaultMigrations;
 };

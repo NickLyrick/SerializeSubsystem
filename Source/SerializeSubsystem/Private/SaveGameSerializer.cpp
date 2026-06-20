@@ -6,6 +6,8 @@
 #include "Serialization/CustomVersion.h"
 #include "UObject/Package.h"
 
+#include "Misc/CoreRedirects.h"
+
 #include "SaveGameFunctionLibrary.h"
 #include "SaveGameObject.h"
 #include "SaveGameSettings.h"
@@ -32,7 +34,7 @@ static_assert(sizeof(FSaveGameManifest) == 12, "FSaveGameManifest layout changed
 static TArray<uint8> CompressAndWrapBlob(const TArray<uint8> &Data) {
   TArray<uint8> Compressed;
   FMemoryWriter CompressAr(Compressed);
-  SerializeCompressedData<false>(CompressAr, Data);
+  SerializeCompressedData<false>(CompressAr, const_cast<TArray<uint8> &>(Data));
 
   FSaveGameManifest Manifest;
   Manifest.PluginVersion = static_cast<int32>(FSaveGameVersion::LatestVersion);
@@ -661,6 +663,26 @@ template <bool bIsLoading, bool bIsTextFormat>
 void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActorData(
     AActor *Actor, FStructuredArchive::FSlot &ActorSlot) {
   Actor->SerializeScriptProperties(ActorSlot.EnterAttribute(TEXT("Properties")));
+
+  if constexpr (bIsLoading) {
+    for (const FMigration_SetDefaultValue &Migration : PendingDefaultMigrations) {
+      UClass *TargetClass = Migration.OwnerClass.TryLoadClass<UObject>();
+      if (!TargetClass || !Actor->IsA(TargetClass))
+        continue;
+      FProperty *Prop =
+          FindFProperty<FProperty>(Actor->GetClass(), Migration.PropertyName);
+      if (!Prop) {
+        UE_LOG(LogSaveGame, Warning,
+               TEXT("Migration: property '%s' not found on %s — skipping."),
+               *Migration.PropertyName.ToString(), *Actor->GetClass()->GetName());
+        continue;
+      }
+      void *Data = Prop->ContainerPtrToValuePtr<void>(Actor);
+      Prop->ImportText_Direct(*Migration.ExportedDefaultValue, Data, Actor,
+                              PPF_None);
+    }
+  }
+
   SerializeActorComponents(Actor, ActorSlot);
 
   FStructuredArchive::FSlot CustomDataSlot = ActorSlot.EnterAttribute(TEXT("Data"));
@@ -777,6 +799,43 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeVersions() {
              static_cast<int32>(FSaveGameVersion::MinCompatibleVersion));
       BroadcastLoadFailed(ESaveGameLoadResult::IncompatibleVersion);
       return;
+    }
+
+    const USaveGameSettings *MigSettings = GetDefault<USaveGameSettings>();
+    for (const FInstancedStruct &StepInstance : MigSettings->Migrations) {
+      const FSaveGameMigrationStep *Base =
+          StepInstance.GetPtr<FSaveGameMigrationStep>();
+      if (!Base)
+        continue;
+      const FCustomVersion *Cv = VersionContainer.GetVersion(Base->VersionGuid);
+      const int32 SavedVersion = Cv ? Cv->Version : -1;
+      if (SavedVersion >= Base->TargetVersion)
+        continue;
+
+      if (const FMigration_RenameField *Rename =
+              StepInstance.GetPtr<FMigration_RenameField>()) {
+        if (!Rename->OldPropertyName.IsNone() &&
+            !Rename->NewPropertyName.IsNone() &&
+            !Rename->OwnerClassName.IsNone()) {
+          const FString Old = Rename->OwnerClassName.ToString() + TEXT(".") +
+                              Rename->OldPropertyName.ToString();
+          const FString New = Rename->OwnerClassName.ToString() + TEXT(".") +
+                              Rename->NewPropertyName.ToString();
+          TArray<FCoreRedirect> Redirects;
+          Redirects.Add(FCoreRedirect(ECoreRedirectFlags::Type_Property, Old, New));
+          FCoreRedirects::AddRedirectList(Redirects, TEXT("SaveGameMigration"));
+          UE_LOG(LogSaveGame, Log,
+                 TEXT("Migration: registered property rename %s -> %s"), *Old,
+                 *New);
+        }
+      } else if (const FMigration_SetDefaultValue *Default =
+                     StepInstance.GetPtr<FMigration_SetDefaultValue>()) {
+        PendingDefaultMigrations.Add(*Default);
+        UE_LOG(LogSaveGame, Log,
+               TEXT("Migration: queued default value for %s::%s"),
+               *Default->OwnerClass.ToString(),
+               *Default->PropertyName.ToString());
+      }
     }
   }
 

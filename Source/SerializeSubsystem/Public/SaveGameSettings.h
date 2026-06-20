@@ -2,7 +2,9 @@
 
 #include "CoreMinimal.h"
 #include "Engine/DeveloperSettings.h"
+#include "StructUtils/InstancedStruct.h"
 
+#include "SaveGameMigrationStep.h"
 #include "SaveGameSettings.generated.h"
 
 USTRUCT(BlueprintType, BlueprintInternalUseOnly)
@@ -35,7 +37,7 @@ public:
   PostEditChangeProperty(FPropertyChangedEvent &PropertyChangedEvent) override;
 #endif
 
-protected:
+public:
   /**
    * When false (default), loading a save that was created on a different engine
    * version is rejected with ESaveGameLoadResult::EngineVersionMismatch.
@@ -50,6 +52,20 @@ protected:
    */
   UPROPERTY(EditAnywhere, Config, Category = Version)
   TArray<FSaveGameVersionInfo> Versions;
+
+  /**
+   * Migration steps applied on load when upgrading from an older save version.
+   * Each step specifies a VersionGuid + TargetVersion pair; it is applied when
+   * the loaded save's version for that GUID is strictly below TargetVersion.
+   *
+   * Built-in step types:
+   *   FMigration_RenameField     — registers a CoreRedirect before deserialization
+   *   FMigration_SetDefaultValue — overrides a property value after deserialization
+   */
+  UPROPERTY(EditAnywhere, Config, Category = Migration,
+            meta = (BaseStruct = "/Script/SerializeSubsystem.SaveGameMigrationStep",
+                    ExcludeBaseStruct))
+  TArray<FInstancedStruct> Migrations;
 
 private:
   mutable TMap<TObjectPtr<UEnum>, FGuid> CachedVersions;
