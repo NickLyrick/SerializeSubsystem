@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "SaveGameMigrationStep.h"
 #include "Structs/SaveGameSturct.h"
 #include "Structs/SerializationStructs.h"
 #include "Subsystems/GameInstanceSubsystem.h"
@@ -89,4 +90,11 @@ private:
 
   TSharedPtr<FLevelStruct> PersistentLevelRecord;
   TSharedPtr<FSerializedData> SerializedData = MakeShared<FSerializedData>();
+
+  // SetDefaultValue migrations collected by the header serializer during
+  // DeserializeHeaderData. Stored here so all level and streaming-level
+  // serializer instances (which are separate objects) share the same queue.
+  // Reset at the start of each Load() call.
+  TArray<FMigration_SetDefaultValue> PendingDefaultMigrations;
+  TArray<TObjectPtr<UClass>> PendingDefaultMigrationClasses;
 };
