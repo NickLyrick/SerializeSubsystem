@@ -241,13 +241,15 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::DeserializeHeaderData(TArra
 template <bool bIsLoading, bool bIsTextFormat>
 void TSaveGameSerializer<bIsLoading, bIsTextFormat>::DeserializeHeaderData()
 {
-	if constexpr (!(bIsLoading && bIsTextFormat))
+	if constexpr (bIsLoading && bIsTextFormat)
+	{
+		SerializeHeader();
+		SerializeVersions();
+	}
+	else
 	{
 		checkNoEntry();
-		return;
 	}
-	SerializeHeader();
-	SerializeVersions();
 }
 
 template <bool bIsLoading, bool bIsTextFormat>
@@ -337,12 +339,14 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::DeserializeLevelData(TSoftO
 template <bool bIsLoading, bool bIsTextFormat>
 void TSaveGameSerializer<bIsLoading, bIsTextFormat>::DeserializeLevelData(TSoftObjectPtr<ULevel> Level)
 {
-	if constexpr (!(bIsLoading && bIsTextFormat))
+	if constexpr (bIsLoading && bIsTextFormat)
+	{
+		InitiateLevelLoad(Level);
+	}
+	else
 	{
 		checkNoEntry();
-		return;
 	}
-	InitiateLevelLoad(Level);
 }
 
 template <bool bIsLoading, bool bIsTextFormat>
@@ -419,15 +423,16 @@ template <bool bIsLoading, bool bIsTextFormat>
 void TSaveGameSerializer<bIsLoading, bIsTextFormat>::DeserializeStreamingLevelData(
     const TSoftObjectPtr<ULevelStreaming>& StreamingLevel)
 {
-	if constexpr (!(bIsLoading && bIsTextFormat))
+	if constexpr (bIsLoading && bIsTextFormat)
+	{
+		if (StreamingLevel->IsLevelLoaded())
+		{
+			SerializeStreamingLevel(StreamingLevel);
+		}
+	}
+	else
 	{
 		checkNoEntry();
-		return;
-	}
-
-	if (StreamingLevel->IsLevelLoaded())
-	{
-		SerializeStreamingLevel(StreamingLevel);
 	}
 }
 
