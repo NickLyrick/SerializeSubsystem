@@ -625,12 +625,33 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActors(ULevel* Lev
 						               return;
 					               }
 
-					               FActorSpawnParameters SpawnParameters;
-					               SpawnParameters.OverrideLevel = Level;
-					               SpawnParameters.Name = *ActorName;
-					               SpawnParameters.bNoFail = true;
+					               // Some actors (e.g. GameMode-spawned pawns) are dynamically created
+					               // before the serializer runs OnMapLoad, so they already exist in the
+					               // level under the same name. Try to reclaim the existing instance
+					               // before attempting a new spawn to avoid the "Cannot generate unique
+					               // name" fatal when bNoFail is true.
+					               Actor = FindObjectFast<AActor>(Level, *ActorName);
 
-					               Actor = Level->GetWorld()->SpawnActor(ActorClass, nullptr, nullptr, SpawnParameters);
+					               if (!IsValid(Actor))
+					               {
+						               FActorSpawnParameters SpawnParameters;
+						               SpawnParameters.OverrideLevel = Level;
+						               SpawnParameters.Name = *ActorName;
+						               SpawnParameters.bNoFail = false;
+
+						               Actor = Level->GetWorld()->SpawnActor(ActorClass, nullptr, nullptr, SpawnParameters);
+
+						               if (!IsValid(Actor))
+						               {
+							               UE_LOG(LogSaveGame,
+							                      Error,
+							                      TEXT("Failed to spawn actor '%s' of class '%s' — "
+							                           "actor will be skipped."),
+							                      *ActorName,
+							                      *Class.ToString());
+							               return;
+						               }
+					               }
 
 					               if (IsValid(Actor) && SpawnID.IsValid() && Actor->Implements<USaveGameSpawnActor>())
 					               {
