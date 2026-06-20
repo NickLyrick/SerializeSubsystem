@@ -22,7 +22,7 @@ public:
 
 	/** Stable unique ID for this version slot — used as the FCustomVersion GUID in save archives.
 	 *  Generated once; changing it makes all existing saves with this version unreadable. */
-	UPROPERTY(VisibleAnywhere, AdvancedDisplay, Category = "Save Game")
+	UPROPERTY(VisibleAnywhere, AdvancedDisplay, meta = (IgnoreForMemberInitializationTest), Category = "Save Game")
 	FGuid ID;
 
 	/** Enum whose last value is treated as the current version number.
