@@ -63,30 +63,24 @@ FORCEINLINE_DEBUGGABLE void SerializeCompressedData(FArchive &Ar,
 // binary (false).
 template <bool bIsLoading, bool bIsTextFormat>
 TSaveGameSerializer<bIsLoading, bIsTextFormat>::TSaveGameSerializer(
-    USerializeSubsystem *InSerializeSubsystem)
-    : SerializeSubsystem(InSerializeSubsystem), // Assign the input
-                                                // save game subsystem to the
-                                                // member variable.
-      Archive(Data),         // Initialize the archive with the raw data array.
-      ProxyArchive(Archive), // Create a proxy archive for additional handling.
-      Formatter(ProxyArchive), // Use the proxy archive to set up the formatter.
-      StructuredArchive(Formatter),       // Create a structured archive
-                                          // using the formatter.
-      RootSlot(StructuredArchive.Open()), // Open the structured archive
-                                          // and get the root slot.
-      RootRecord(RootSlot.EnterRecord()), // Enter the root slot and initialize
-                                          // the root record
-      VersionOffset(0), // Initialize the version offset to zero.
-      HeaderOffset(0)   // Initialize the header offset to zero.
+    USerializeSubsystem *InSerializeSubsystem, TArray<uint8> InInitialData)
+    : SerializeSubsystem(InSerializeSubsystem),
+      Data(MoveTemp(InInitialData)), // For JSON loading: JSON bytes must be
+                                     // here before Formatter is constructed,
+                                     // because FJsonArchiveInputFormatter
+                                     // parses the JSON eagerly in its ctor.
+      Archive(Data),
+      ProxyArchive(Archive),
+      Formatter(ProxyArchive),
+      StructuredArchive(Formatter),
+      RootSlot(StructuredArchive.Open()),
+      RootRecord(RootSlot.EnterRecord()),
+      VersionOffset(0),
+      HeaderOffset(0)
 {
-  // Cast the proxy archive to `FArchive` and set whether the format is
-  // text-based.
   static_cast<FArchive &>(ProxyArchive).SetIsTextFormat(bIsTextFormat);
 
   // TODO: Look
-  // Ensure that the archive uses the latest custom version for save game
-  // compatibility. `FSaveGameVersion::GUID` identifies the GUID associated with
-  // the save game version.
   Archive.UsingCustomVersion(FSaveGameVersion::GUID);
 }
 
@@ -132,17 +126,25 @@ TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeHeaderData() {
 template <bool bIsLoading, bool bIsTextFormat>
 void TSaveGameSerializer<bIsLoading, bIsTextFormat>::DeserializeHeaderData(
     TArray<uint8> &HeaderData) {
-  check(bIsLoading && !bIsTextFormat);
+  check(bIsLoading);
 
   TRACE_BOOKMARK(TEXT("Begin: DeserializeHeaderData[%s]"),
                  bIsTextFormat ? TEXT("Text") : TEXT("Binary"));
 
   if (!bIsTextFormat) {
-    // Decompress the loaded save game data
     FSaveGameMemoryArchive CompressorArchive(HeaderData);
     SerializeCompressedData<true>(CompressorArchive, Data);
   }
+  // JSON: data was provided at construction, nothing to decompress.
 
+  SerializeHeader();
+}
+
+template <bool bIsLoading, bool bIsTextFormat>
+void TSaveGameSerializer<bIsLoading, bIsTextFormat>::DeserializeHeaderData() {
+  static_assert(bIsLoading && bIsTextFormat,
+                "No-param DeserializeHeaderData is for JSON loading only. "
+                "For binary loading use DeserializeHeaderData(TArray<uint8>&).");
   SerializeHeader();
 }
 
@@ -189,19 +191,14 @@ TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeLevelData(
 }
 
 template <bool bIsLoading, bool bIsTextFormat>
-void TSaveGameSerializer<bIsLoading, bIsTextFormat>::DeserializeLevelData(
-    TSoftObjectPtr<ULevel> Level, TArray<uint8> &LevelData) {
-  if (!bIsTextFormat) {
-    // Decompress the loaded save game data
-    FSaveGameMemoryArchive CompressorArchive(LevelData);
-    SerializeCompressedData<true>(CompressorArchive, Data);
-  }
-
+void TSaveGameSerializer<bIsLoading, bIsTextFormat>::InitiateLevelLoad(
+    const TSoftObjectPtr<ULevel> &Level) {
   const FString MapName =
       Level->GetOutermost()->GetLoadedPath().GetPackageName();
 
-  // If we don't have a map, we should fail
   if (MapName.IsEmpty()) {
+    UE_LOG(LogTemp, Error,
+           TEXT("SerializeSubsystem: Cannot load level — map name is empty."));
     return;
   }
 
@@ -212,11 +209,31 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::DeserializeLevelData(
     return;
   }
 
-  // When our map has loaded, call the OnMapLoad method
   FCoreUObjectDelegates::PostLoadMapWithWorld.AddThreadSafeSP(
       this, &TSaveGameSerializer::OnMapLoad);
 
   World->SeamlessTravel(MapName, true);
+}
+
+template <bool bIsLoading, bool bIsTextFormat>
+void TSaveGameSerializer<bIsLoading, bIsTextFormat>::DeserializeLevelData(
+    TSoftObjectPtr<ULevel> Level, TArray<uint8> &LevelData) {
+  if (!bIsTextFormat) {
+    FSaveGameMemoryArchive CompressorArchive(LevelData);
+    SerializeCompressedData<true>(CompressorArchive, Data);
+  }
+  // JSON: data was provided at construction.
+
+  InitiateLevelLoad(Level);
+}
+
+template <bool bIsLoading, bool bIsTextFormat>
+void TSaveGameSerializer<bIsLoading, bIsTextFormat>::DeserializeLevelData(
+    TSoftObjectPtr<ULevel> Level) {
+  static_assert(bIsLoading && bIsTextFormat,
+                "No-param DeserializeLevelData is for JSON loading only. "
+                "For binary loading use DeserializeLevelData(Level, TArray&).");
+  InitiateLevelLoad(Level);
 }
 
 template <bool bIsLoading, bool bIsTextFormat>
@@ -270,19 +287,31 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::
     DeserializeStreamingLevelData(
         const TSoftObjectPtr<ULevelStreaming> &StreamingLevel,
         TArray<uint8> &StreamingLevelData) {
-  check(bIsLoading && !bIsTextFormat);
+  check(bIsLoading);
 
   TRACE_BOOKMARK(TEXT("Begin: DeserializeStreamingLevelData[%s]"),
                  bIsTextFormat ? TEXT("Text") : TEXT("Binary"));
 
   if (!bIsTextFormat) {
-    // Decompress the loaded save game data
     FSaveGameMemoryArchive CompressorArchive(StreamingLevelData);
     SerializeCompressedData<true>(CompressorArchive, Data);
   }
+  // JSON: data was provided at construction.
 
-  // Double check that the level is loaded
-  // This is to ensure that the level is loaded before we serialize the actors
+  if (StreamingLevel->IsLevelLoaded()) {
+    SerializeStreamingLevel(StreamingLevel);
+  }
+}
+
+template <bool bIsLoading, bool bIsTextFormat>
+void TSaveGameSerializer<bIsLoading, bIsTextFormat>::
+    DeserializeStreamingLevelData(
+        const TSoftObjectPtr<ULevelStreaming> &StreamingLevel) {
+  static_assert(
+      bIsLoading && bIsTextFormat,
+      "No-param DeserializeStreamingLevelData is for JSON loading only. "
+      "For binary use DeserializeStreamingLevelData(Level, TArray&).");
+
   if (StreamingLevel->IsLevelLoaded()) {
     SerializeStreamingLevel(StreamingLevel);
   }
@@ -402,12 +431,10 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActors(
     TMap<FGuid, AActor *> SpawnIDs;
     QUICK_SCOPE_CYCLE_COUNTER(STAT_SaveGame_InitializeActors);
 
-    // Iterate through our live actors so that we can map their SpawnIDs
     for (const TWeakObjectPtr<AActor> &ActorPtr : SaveGameActors) {
       AActor *Actor = ActorPtr.Get();
       if (IsValid(Actor) && Actor->Implements<USaveGameSpawnActor>()) {
         const FGuid SpawnID = ISaveGameSpawnActor::Execute_GetSpawnID(Actor);
-
         if (SpawnID.IsValid()) {
           SpawnIDs.Add(SpawnID, Actor);
         }
@@ -416,21 +443,16 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActors(
 
     Actors.SetNumZeroed(NumActors);
 
-    // Iterate through the saved actors and spawn or find their live
-    // equivalent
     for (int32 ActorIdx = 0; ActorIdx < NumActors; ++ActorIdx) {
       AActor *&Actor = Actors[ActorIdx];
 
-      // Populate our actors list with spawned actors or level references to
-      // actors
       SerializeActor(
           ActorsMap, Actor,
           [&](const FString &ActorName, const FSoftClassPath &Class,
-              const FGuid &SpawnID, FStructuredArchive::FSlot &) {
+              const FGuid &SpawnID, FStructuredArchive::FSlot &ActorSlot) {
             ensureAlways(!ActorName.IsEmpty());
 
             if (Class.IsNull()) {
-              // This is a loaded actor (is a level actor), let's find it
               Actor = FindObjectFast<AActor>(Level, *ActorName);
             } else if (SpawnID.IsValid() && SpawnIDs.Contains(SpawnID)) {
               Actor = SpawnIDs[SpawnID];
@@ -445,10 +467,7 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActors(
                 return;
               }
 
-              // This is a spawned actor, let's spawn it
               FActorSpawnParameters SpawnParameters;
-
-              // If we were handling levels, specify it here
               SpawnParameters.OverrideLevel = Level;
               SpawnParameters.Name = *ActorName;
               SpawnParameters.bNoFail = true;
@@ -467,28 +486,48 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActors(
                   Level->GetPackage()->GetFName(),
                   Level->GetOuter()->GetFName());
               const FString ActorSubPath = LEVEL_SUBPATH_PREFIX + ActorName;
-
-              // Redirect old actor path to new one if name changed after spawn
               ProxyArchive.AddRedirect(
                   FSoftObjectPath(LevelAssetPath, ActorSubPath),
                   FSoftObjectPath(Actor));
             }
+
+            // JSON loading uses a single-pass approach: FStructuredArchive
+            // with JSON is forward-only and cannot seek back for a second pass,
+            // so we serialize properties immediately after spawning/finding
+            // the actor, while ActorSlot is still open.
+            if constexpr (bIsTextFormat) {
+              if (!IsValid(Actor)) {
+                UE_LOG(LogTemp, Warning,
+                       TEXT("SerializeSubsystem: Actor '%s' is invalid after "
+                            "spawn/find — skipping property deserialization."),
+                       *ActorName);
+                return;
+              }
+
+              SerializeActorData(Actor, ActorSlot);
+            }
           });
+    }
+
+    // JSON loading is fully handled above in the single-pass lambda.
+    // Skip the binary second pass (which seeks back and re-reads the map).
+    if constexpr (bIsTextFormat) {
+      return;
     }
   }
 
   {
     QUICK_SCOPE_CYCLE_COUNTER(STAT_SaveGame_SerializeActorData);
 
+    // Binary loading: seek back to re-read actor data in a second pass.
+    // (First pass only spawned/found actors; this pass serializes properties.)
     if (bIsLoading && !bIsTextFormat) {
-      // Go back to the start of the actor data
       Archive.Seek(ActorsPosition);
     }
 
     TSet<TWeakObjectPtr<AActor>>::TConstIterator ActorsIt =
         SaveGameActors.CreateConstIterator();
 
-    // Actually serialize the actor data and their properties
     for (int32 ActorIdx = 0; ActorIdx < NumActors; ++ActorIdx) {
       AActor *Actor;
 
@@ -502,30 +541,26 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActors(
       if (!IsValid(Actor))
         continue;
 
-      // Do the actual serialization of the properties
       SerializeActor(
           ActorsMap, Actor,
-          [&](const FString &, const FSoftClassPath &, const FGuid &SpawnID,
+          [&](const FString &, const FSoftClassPath &, const FGuid &,
               FStructuredArchive::FSlot &ActorSlot) {
-            Actor->SerializeScriptProperties(
-                ActorSlot.EnterAttribute(TEXT("Properties")));
-
-            // Serialize Actor Components
-            SerializeActorComponents(Actor, ActorSlot);
-
-            FStructuredArchive::FSlot CustomDataSlot =
-                ActorSlot.EnterAttribute(TEXT("Data"));
-            FStructuredArchive::FRecord CustomDataRecord =
-                CustomDataSlot.EnterRecord();
-
-            // Encapsulate the record in something a Blueprint can access
-            FSaveGameArchive SaveGameArchive(CustomDataRecord, Actor);
-
-            ISaveGameObject::Execute_OnSerialize(Actor, SaveGameArchive,
-                                                 bIsLoading);
+            SerializeActorData(Actor, ActorSlot);
           });
     }
   }
+}
+
+template <bool bIsLoading, bool bIsTextFormat>
+void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActorData(
+    AActor *Actor, FStructuredArchive::FSlot &ActorSlot) {
+  Actor->SerializeScriptProperties(ActorSlot.EnterAttribute(TEXT("Properties")));
+  SerializeActorComponents(Actor, ActorSlot);
+
+  FStructuredArchive::FSlot CustomDataSlot = ActorSlot.EnterAttribute(TEXT("Data"));
+  FStructuredArchive::FRecord CustomDataRecord = CustomDataSlot.EnterRecord();
+  FSaveGameArchive SaveGameArchive(CustomDataRecord, Actor);
+  ISaveGameObject::Execute_OnSerialize(Actor, SaveGameArchive, bIsLoading);
 }
 
 // Serialize the actor's components
@@ -749,6 +784,7 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActorComponent(
 // Instantiate the permutations of TSaveGameSerializer
 #if WITH_TEXT_ARCHIVE_SUPPORT
 template TSaveGameSerializer<false, true>;
+template TSaveGameSerializer<true, true>;
 #endif
 
 template TSaveGameSerializer<false>;
