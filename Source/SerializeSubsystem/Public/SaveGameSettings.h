@@ -29,6 +29,7 @@ class SERIALIZESUBSYSTEM_API USaveGameSettings : public UDeveloperSettings {
 
 public:
   FGuid GetVersionId(const UEnum *VersionEnum) const;
+  bool IsLoadingFromIncompatibleEngineVersionAllowed() const { return bAllowLoadingFromIncompatibleEngineVersion; }
 
 #if WITH_EDITOR
   virtual void

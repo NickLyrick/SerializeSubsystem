@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Misc/Build.h"
+#include "Misc/EngineVersion.h"
 
 #if WITH_TEXT_ARCHIVE_SUPPORT
 #include "Serialization/Formatters/JsonArchiveInputFormatter.h"
@@ -198,4 +199,6 @@ private:
   // Offsets
   uint64 VersionOffset;
   uint64 HeaderOffset;
+
+  FEngineVersion SavedEngineVersion;
 };
