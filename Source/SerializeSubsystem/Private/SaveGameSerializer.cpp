@@ -670,22 +670,28 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActorData(
   Actor->SerializeScriptProperties(ActorSlot.EnterAttribute(TEXT("Properties")));
 
   if constexpr (bIsLoading) {
-    for (int32 MigIdx = 0; MigIdx < PendingDefaultMigrations.Num(); ++MigIdx) {
-      UClass *TargetClass = PendingDefaultMigrationClasses[MigIdx];
-      if (!TargetClass || !Actor->IsA(TargetClass))
-        continue;
-      const FMigration_SetDefaultValue &Migration = PendingDefaultMigrations[MigIdx];
-      FProperty *Prop =
-          FindFProperty<FProperty>(Actor->GetClass(), Migration.PropertyName);
-      if (!Prop) {
-        UE_LOG(LogSaveGame, Warning,
-               TEXT("Migration: property '%s' not found on %s — skipping."),
-               *Migration.PropertyName.ToString(), *Actor->GetClass()->GetName());
-        continue;
+    if (USerializeSubsystem *Sub = SerializeSubsystem.Get()) {
+      for (int32 MigIdx = 0; MigIdx < Sub->PendingDefaultMigrations.Num(); ++MigIdx) {
+        UClass *&TargetClass = Sub->PendingDefaultMigrationClasses[MigIdx];
+        if (!TargetClass) {
+          TargetClass =
+              Sub->PendingDefaultMigrations[MigIdx].OwnerClass.TryLoadClass<UObject>();
+        }
+        if (!TargetClass || !Actor->IsA(TargetClass))
+          continue;
+        const FMigration_SetDefaultValue &Migration = Sub->PendingDefaultMigrations[MigIdx];
+        FProperty *Prop =
+            FindFProperty<FProperty>(Actor->GetClass(), Migration.PropertyName);
+        if (!Prop) {
+          UE_LOG(LogSaveGame, Warning,
+                 TEXT("Migration: property '%s' not found on %s — skipping."),
+                 *Migration.PropertyName.ToString(), *Actor->GetClass()->GetName());
+          continue;
+        }
+        void *PropData = Prop->ContainerPtrToValuePtr<void>(Actor);
+        Prop->ImportText_Direct(*Migration.ExportedDefaultValue, PropData, Actor,
+                                PPF_None);
       }
-      void *PropData = Prop->ContainerPtrToValuePtr<void>(Actor);
-      Prop->ImportText_Direct(*Migration.ExportedDefaultValue, PropData, Actor,
-                              PPF_None);
     }
   }
 
@@ -835,13 +841,16 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeVersions() {
       } else if (const FMigration_SetDefaultValue *Default =
                      StepInstance.GetPtr<FMigration_SetDefaultValue>()) {
         const FCustomVersion *Cv = VersionContainer.GetVersion(Default->VersionGuid);
-        if (Cv && Cv->Version >= Default->TargetVersion)
+        if (!Cv || Cv->Version >= Default->TargetVersion)
           continue;
-        PendingDefaultMigrations.Add(*Default);
-        PendingDefaultMigrationClasses.Add(Default->OwnerClass.TryLoadClass<UObject>());
-        UE_LOG(LogSaveGame, Log,
-               TEXT("Migration: queued default value for %s::%s"),
-               *Default->OwnerClass.ToString(), *Default->PropertyName.ToString());
+        if (USerializeSubsystem *Sub = SerializeSubsystem.Get()) {
+          Sub->PendingDefaultMigrations.Add(*Default);
+          Sub->PendingDefaultMigrationClasses.Add(
+              Default->OwnerClass.TryLoadClass<UObject>());
+          UE_LOG(LogSaveGame, Log,
+                 TEXT("Migration: queued default value for %s::%s"),
+                 *Default->OwnerClass.ToString(), *Default->PropertyName.ToString());
+        }
       }
     }
     if (!PendingRedirects.IsEmpty()) {

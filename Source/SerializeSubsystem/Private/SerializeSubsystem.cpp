@@ -85,6 +85,8 @@ void USerializeSubsystem::Load(FSerializedData Data) {
   }
 
   *SerializedData = Data;
+  PendingDefaultMigrations.Reset();
+  PendingDefaultMigrationClasses.Reset();
 
   {
     TSaveGameSerializer<true> BinarySerializer(this);
