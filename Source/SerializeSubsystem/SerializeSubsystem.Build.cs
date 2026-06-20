@@ -15,7 +15,8 @@ public class SerializeSubsystem : ModuleRules
 		{
 			"CoreUObject",
 			"Engine",
-			"DeveloperSettings"
+			"DeveloperSettings",
+			"StructUtils",
 		});
 
 		if (Target.Type == TargetType.Editor)
