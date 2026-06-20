@@ -181,6 +181,9 @@ private:
   /** Serializes an actor's script properties, components, and custom data. */
   void SerializeActorData(AActor *Actor, FStructuredArchive::FSlot &ActorSlot);
 
+  /** Resolves SerializeSubsystem and broadcasts OnLoadFailed. */
+  void BroadcastLoadFailed();
+
   // Internal Variables
 private:
   // The game instance subsystem that manages the Serialization

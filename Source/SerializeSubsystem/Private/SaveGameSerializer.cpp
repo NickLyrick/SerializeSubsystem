@@ -27,7 +27,7 @@ FORCEINLINE_DEBUGGABLE bool SerializeCompressedData(FArchive &Ar,
 
   Ar << UncompressedSize;
 
-  if (bLoading) {
+  if constexpr (bLoading) {
     if (Ar.IsError() || UncompressedSize <= 0 ||
         UncompressedSize > static_cast<int64>(MAX_int32)) {
       UE_LOG(LogTemp, Error,
@@ -35,6 +35,7 @@ FORCEINLINE_DEBUGGABLE bool SerializeCompressedData(FArchive &Ar,
                   "unreadable uncompressed size (%lld). Save file may be "
                   "corrupted or truncated."),
              UncompressedSize);
+      Ar.SetError();
       return false;
     }
     Data.SetNumUninitialized(static_cast<int32>(UncompressedSize));
@@ -42,11 +43,13 @@ FORCEINLINE_DEBUGGABLE bool SerializeCompressedData(FArchive &Ar,
 
   Ar.SerializeCompressed(Data.GetData(), UncompressedSize, NAME_Zlib);
 
-  if (bLoading && Ar.IsError()) {
-    UE_LOG(LogTemp, Error,
-           TEXT("SerializeSubsystem: Decompression failed — archive entered "
-                "error state. Save file may be corrupted or truncated."));
-    return false;
+  if constexpr (bLoading) {
+    if (Ar.IsError()) {
+      UE_LOG(LogTemp, Error,
+             TEXT("SerializeSubsystem: Decompression failed — archive entered "
+                  "error state. Save file may be corrupted or truncated."));
+      return false;
+    }
   }
 
   return true;
@@ -132,9 +135,7 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::DeserializeHeaderData(
   if (!bIsTextFormat) {
     FSaveGameMemoryArchive CompressorArchive(HeaderData);
     if (!SerializeCompressedData<true>(CompressorArchive, Data)) {
-      if (SerializeSubsystem.IsValid()) {
-        SerializeSubsystem->OnLoadFailed.Broadcast();
-      }
+      BroadcastLoadFailed();
       return;
     }
   }
@@ -202,9 +203,7 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::InitiateLevelLoad(
   if (MapName.IsEmpty()) {
     UE_LOG(LogTemp, Error,
            TEXT("SerializeSubsystem: Cannot load level — map name is empty."));
-    if (SerializeSubsystem.IsValid()) {
-      SerializeSubsystem->OnLoadFailed.Broadcast();
-    }
+    BroadcastLoadFailed();
     return;
   }
 
@@ -227,9 +226,7 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::DeserializeLevelData(
   if (!bIsTextFormat) {
     FSaveGameMemoryArchive CompressorArchive(LevelData);
     if (!SerializeCompressedData<true>(CompressorArchive, Data)) {
-      if (SerializeSubsystem.IsValid()) {
-        SerializeSubsystem->OnLoadFailed.Broadcast();
-      }
+      BroadcastLoadFailed();
       return;
     }
   }
@@ -306,9 +303,7 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::
   if (!bIsTextFormat) {
     FSaveGameMemoryArchive CompressorArchive(StreamingLevelData);
     if (!SerializeCompressedData<true>(CompressorArchive, Data)) {
-      if (SerializeSubsystem.IsValid()) {
-        SerializeSubsystem->OnLoadFailed.Broadcast();
-      }
+      BroadcastLoadFailed();
       return;
     }
   }
@@ -565,6 +560,13 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActors(
             SerializeActorData(Actor, ActorSlot);
           });
     }
+  }
+}
+
+template <bool bIsLoading, bool bIsTextFormat>
+void TSaveGameSerializer<bIsLoading, bIsTextFormat>::BroadcastLoadFailed() {
+  if (USerializeSubsystem *Sub = SerializeSubsystem.Get()) {
+    Sub->OnLoadFailed.Broadcast();
   }
 }
 
