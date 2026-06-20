@@ -34,7 +34,7 @@ static_assert(sizeof(FSaveGameManifest) == 12, "FSaveGameManifest layout changed
 static TArray<uint8> CompressAndWrapBlob(const TArray<uint8> &Data) {
   TArray<uint8> Compressed;
   FMemoryWriter CompressAr(Compressed);
-  SerializeCompressedData<false>(CompressAr, const_cast<TArray<uint8> &>(Data));
+  SerializeCompressedData<false>(CompressAr, Data);
 
   FSaveGameManifest Manifest;
   Manifest.PluginVersion = static_cast<int32>(FSaveGameVersion::LatestVersion);
@@ -80,12 +80,14 @@ static ESaveGameLoadResult ValidateManifest(const TArray<uint8> &Blob,
 }
 
 template <bool bLoading>
-FORCEINLINE_DEBUGGABLE bool SerializeCompressedData(FArchive &Ar,
-                                                    TArray<uint8> &Data) {
+FORCEINLINE_DEBUGGABLE bool SerializeCompressedData(
+    FArchive &Ar,
+    typename TChooseClass<bLoading, TArray<uint8>, const TArray<uint8>>::Result
+        &Data) {
   check(Ar.IsLoading() == bLoading);
 
   int64 UncompressedSize = 0;
-  if (!bLoading) {
+  if constexpr (!bLoading) {
     UncompressedSize = Data.Num();
   }
 
@@ -104,7 +106,10 @@ FORCEINLINE_DEBUGGABLE bool SerializeCompressedData(FArchive &Ar,
     Data.SetNumUninitialized(static_cast<int32>(UncompressedSize));
   }
 
-  Ar.SerializeCompressed(Data.GetData(), UncompressedSize, NAME_Zlib);
+  // FArchive::SerializeCompressed takes void* (not const void*) even on save;
+  // the const_cast is safe here because the archive only reads on the save path.
+  Ar.SerializeCompressed(const_cast<uint8 *>(Data.GetData()), UncompressedSize,
+                         NAME_Zlib);
 
   if constexpr (bLoading) {
     if (Ar.IsError()) {
@@ -665,10 +670,11 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActorData(
   Actor->SerializeScriptProperties(ActorSlot.EnterAttribute(TEXT("Properties")));
 
   if constexpr (bIsLoading) {
-    for (const FMigration_SetDefaultValue &Migration : PendingDefaultMigrations) {
-      UClass *TargetClass = Migration.OwnerClass.TryLoadClass<UObject>();
+    for (int32 MigIdx = 0; MigIdx < PendingDefaultMigrations.Num(); ++MigIdx) {
+      UClass *TargetClass = PendingDefaultMigrationClasses[MigIdx];
       if (!TargetClass || !Actor->IsA(TargetClass))
         continue;
+      const FMigration_SetDefaultValue &Migration = PendingDefaultMigrations[MigIdx];
       FProperty *Prop =
           FindFProperty<FProperty>(Actor->GetClass(), Migration.PropertyName);
       if (!Prop) {
@@ -677,8 +683,8 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActorData(
                *Migration.PropertyName.ToString(), *Actor->GetClass()->GetName());
         continue;
       }
-      void *Data = Prop->ContainerPtrToValuePtr<void>(Actor);
-      Prop->ImportText_Direct(*Migration.ExportedDefaultValue, Data, Actor,
+      void *PropData = Prop->ContainerPtrToValuePtr<void>(Actor);
+      Prop->ImportText_Direct(*Migration.ExportedDefaultValue, PropData, Actor,
                               PPF_None);
     }
   }
@@ -768,6 +774,11 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeDestroyedActors(
   }
 }
 
+// Tracks redirect source strings already registered with FCoreRedirects.
+// FCoreRedirects has no unregister API, so we dedup across loads to avoid
+// accumulating duplicate entries in the global redirect table.
+static TSet<FString> GRegisteredSaveGameRedirects;
+
 template <bool bIsLoading, bool bIsTextFormat>
 void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeVersions() {
   QUICK_SCOPE_CYCLE_COUNTER(STAT_SaveGame_SerializeVersions);
@@ -801,41 +812,40 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeVersions() {
       return;
     }
 
+    TArray<FCoreRedirect> PendingRedirects;
     const USaveGameSettings *MigSettings = GetDefault<USaveGameSettings>();
     for (const FInstancedStruct &StepInstance : MigSettings->Migrations) {
-      const FSaveGameMigrationStep *Base =
-          StepInstance.GetPtr<FSaveGameMigrationStep>();
-      if (!Base)
-        continue;
-      const FCustomVersion *Cv = VersionContainer.GetVersion(Base->VersionGuid);
-      const int32 SavedVersion = Cv ? Cv->Version : -1;
-      if (SavedVersion >= Base->TargetVersion)
-        continue;
-
       if (const FMigration_RenameField *Rename =
               StepInstance.GetPtr<FMigration_RenameField>()) {
-        if (!Rename->OldPropertyName.IsNone() &&
-            !Rename->NewPropertyName.IsNone() &&
-            !Rename->OwnerClassName.IsNone()) {
-          const FString Old = Rename->OwnerClassName.ToString() + TEXT(".") +
-                              Rename->OldPropertyName.ToString();
-          const FString New = Rename->OwnerClassName.ToString() + TEXT(".") +
-                              Rename->NewPropertyName.ToString();
-          TArray<FCoreRedirect> Redirects;
-          Redirects.Add(FCoreRedirect(ECoreRedirectFlags::Type_Property, Old, New));
-          FCoreRedirects::AddRedirectList(Redirects, TEXT("SaveGameMigration"));
-          UE_LOG(LogSaveGame, Log,
-                 TEXT("Migration: registered property rename %s -> %s"), *Old,
-                 *New);
-        }
+        const FCustomVersion *Cv = VersionContainer.GetVersion(Rename->VersionGuid);
+        if (Cv && Cv->Version >= Rename->TargetVersion)
+          continue;
+        if (Rename->OldPropertyName.IsNone() || Rename->NewPropertyName.IsNone() ||
+            Rename->OwnerClassName.IsNone())
+          continue;
+        const FString OwnerStr = Rename->OwnerClassName.ToString();
+        const FString Old = OwnerStr + TEXT(".") + Rename->OldPropertyName.ToString();
+        if (GRegisteredSaveGameRedirects.Contains(Old))
+          continue;
+        GRegisteredSaveGameRedirects.Add(Old);
+        const FString New = OwnerStr + TEXT(".") + Rename->NewPropertyName.ToString();
+        PendingRedirects.Add(FCoreRedirect(ECoreRedirectFlags::Type_Property, Old, New));
+        UE_LOG(LogSaveGame, Log,
+               TEXT("Migration: registered property rename %s -> %s"), *Old, *New);
       } else if (const FMigration_SetDefaultValue *Default =
                      StepInstance.GetPtr<FMigration_SetDefaultValue>()) {
+        const FCustomVersion *Cv = VersionContainer.GetVersion(Default->VersionGuid);
+        if (Cv && Cv->Version >= Default->TargetVersion)
+          continue;
         PendingDefaultMigrations.Add(*Default);
+        PendingDefaultMigrationClasses.Add(Default->OwnerClass.TryLoadClass<UObject>());
         UE_LOG(LogSaveGame, Log,
                TEXT("Migration: queued default value for %s::%s"),
-               *Default->OwnerClass.ToString(),
-               *Default->PropertyName.ToString());
+               *Default->OwnerClass.ToString(), *Default->PropertyName.ToString());
       }
+    }
+    if (!PendingRedirects.IsEmpty()) {
+      FCoreRedirects::AddRedirectList(PendingRedirects, TEXT("SaveGameMigration"));
     }
   }
 
