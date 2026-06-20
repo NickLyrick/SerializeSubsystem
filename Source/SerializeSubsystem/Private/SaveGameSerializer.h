@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Misc/Build.h"
+#include "Misc/EngineVersion.h"
 
 #if WITH_TEXT_ARCHIVE_SUPPORT
 #include "Serialization/Formatters/JsonArchiveInputFormatter.h"
@@ -10,15 +11,15 @@
 #include "Components/ActorComponent.h"
 #include "Engine/Level.h"
 #include "Engine/LevelStreaming.h"
+#include "SaveGameMigrationStep.h"
 #include "SaveGameProxyArchive.h"
 #include "Serialization/MemoryReader.h"
 #include "Serialization/MemoryWriter.h"
+#include "SerializeSubsystem.h"
 #include "UObject/SoftObjectPath.h"
 #include "UObject/SoftObjectPtr.h"
 #include "UObject/WeakObjectPtr.h"
 #include <type_traits>
-
-class USerializeSubsystem;
 
 class FSaveGameSerializer : public TSharedFromThis<FSaveGameSerializer>
 {
@@ -26,30 +27,19 @@ public:
 	virtual ~FSaveGameSerializer() = default;
 };
 
-// TODO: This comment is incorrect
 /**
- * The class that manages serializing the world.
+ * Serializes/deserializes the game world across three separately-compressed blobs.
  *
- * Archive data structured like so:
- * - Header
- *		- Engine Versions
- * - Persistent Level #1:
- *   - Actors
- *		  - Actor Name #1:
- *			  - Class: If spawned
- *			  - SpawnID: If implements ISaveGameSpawnActor
- *			  - SaveGame Properties
- *			  - Data written by ISaveGameObject::OnSerialize
- *		  - ...
- *   - Destroyed Level Actors
- *		  - Actor Name #1
- *		  - ...
- *  - Streaming Levels
- * - Versions
- *		- Version:
- *			- ID
- *			- Version Number
- *		- ...
+ * Header blob (FSerializedData::Header):
+ *   EngineVersion, PackageVersion [binary], VersionsOffset [binary],
+ *   CustomVersions [FCustomVersionContainer, stored at VersionsOffset]
+ *
+ * Level blob (FSerializedData::Levels[L].Data) and
+ * Streaming level blob (FSerializedData::Levels[L].StreamingLevels[SL].Data):
+ *   Actors (map):
+ *     ActorName → Class [if dynamically spawned], GUID [if ISaveGameSpawnActor],
+ *                 DataSize [binary only], Properties, Components (map), Data
+ *   DestroyedActors (array): ActorName, ...
  */
 template <bool bIsLoading, bool bIsTextFormat = false>
 class TSaveGameSerializer final : public FSaveGameSerializer
@@ -126,7 +116,9 @@ private:
 
 	/** Serializes any destroyed level actors. On load, level actors will exist
 	 * again, so this will re-destroy them */
-	void SerializeDestroyedActors(ULevel* Level, FStructuredArchive::FSlot& DestroyedActorsSlot);
+	void SerializeDestroyedActors(ULevel* Level,
+	                              FActorsStruct& ActorsRecord,
+	                              FStructuredArchive::FSlot& DestroyedActorsSlot);
 
 	/**
 	 * Serialized at the end of the archive, the versions are useful for
@@ -173,6 +165,9 @@ private:
 	/** Serializes an actor's script properties, components, and custom data. */
 	void SerializeActorData(AActor* Actor, FStructuredArchive::FSlot& ActorSlot);
 
+	/** Resolves SerializeSubsystem and calls FinalizeLoad with the given result. */
+	void BroadcastLoadFailed(ESaveGameLoadResult Result);
+
 	// Internal Variables
 private:
 	// The game instance subsystem that manages the Serialization
@@ -200,4 +195,6 @@ private:
 	// Offsets
 	uint64 VersionOffset;
 	uint64 HeaderOffset;
+
+	FEngineVersion SavedEngineVersion;
 };

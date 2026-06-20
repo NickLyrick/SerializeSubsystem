@@ -31,6 +31,13 @@ void USerializeSubsystem::Deinitialize()
 
 void USerializeSubsystem::Save(FSerializedData& Data)
 {
+	if (!ensureMsgf(!IsLoadingSaveGame(),
+	                TEXT("SerializeSubsystem: Save() called while a load is in "
+	                     "progress — ignoring.")))
+	{
+		return;
+	}
+
 	const TSoftObjectPtr<ULevel> Level = GetWorld()->GetCurrentLevel();
 
 	{ // Serialize Header Data
@@ -70,7 +77,16 @@ void USerializeSubsystem::Save(FSerializedData& Data)
 
 void USerializeSubsystem::Load(FSerializedData Data)
 {
+	if (!ensureMsgf(!IsLoadingSaveGame(),
+	                TEXT("SerializeSubsystem: Load() called while a load is in "
+	                     "progress — ignoring.")))
+	{
+		return;
+	}
+
 	*SerializedData = Data;
+	PendingDefaultMigrations.Reset();
+	PendingDefaultMigrationClasses.Reset();
 
 	{
 		TSaveGameSerializer<true> BinarySerializer(this);
@@ -365,14 +381,12 @@ void USerializeSubsystem::OnActorDestroyed(AActor* Actor)
 	}
 }
 
-// This is called after the persistent level is loaded and all data on the
-// persistent level is deserialized
-void USerializeSubsystem::OnLoadCompleted()
+void USerializeSubsystem::FinalizeLoad(ESaveGameLoadResult Result)
 {
 	CurrentSerializer = nullptr;
 
-	// On this point, we have all the data from the persistent level loaded, and
-	// we can load the streaming levels
-	if (SerializedData.IsValid())
+	OnLoadCompleted.Broadcast(Result);
+
+	if (Result == ESaveGameLoadResult::Success && SerializedData.IsValid())
 		LoadStreamingLevels();
 }
