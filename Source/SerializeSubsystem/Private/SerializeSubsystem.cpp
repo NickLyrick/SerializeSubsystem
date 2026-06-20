@@ -117,6 +117,16 @@ bool USerializeSubsystem::IsLoadingSaveGame() const
 #if !UE_BUILD_SHIPPING && WITH_TEXT_ARCHIVE_SUPPORT
 void USerializeSubsystem::LoadFromJson(TArray<uint8> JsonLevelData)
 {
+	// Derive LevelName from the current world if it wasn't set by a prior Save()
+	// call this PIE session — empty LevelName causes InitiateLevelLoad to fail silently.
+	if (SerializedData->LevelName.IsEmpty())
+	{
+		if (UWorld* World = GetWorld())
+		{
+			SerializedData->LevelName = World->GetCurrentLevel()->GetOutermost()->GetLoadedPath().GetPackageName();
+		}
+	}
+
 	// FJsonArchiveInputFormatter parses JSON eagerly in its constructor, so the
 	// data must be passed upfront rather than provided via DeserializeLevelData.
 	const TSharedRef<TSaveGameSerializer<true, true>> JsonSerializer =
