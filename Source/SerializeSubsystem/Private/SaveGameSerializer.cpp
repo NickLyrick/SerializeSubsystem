@@ -15,43 +15,41 @@
 
 #define LEVEL_SUBPATH_PREFIX TEXT("PersistentLevel.")
 
-// Template function to serialize or deserialize compressed data.
-// The `bLoading` parameter determines whether the operation is for loading
-// (deserialization) or saving (serialization).
 template <bool bLoading>
-FORCEINLINE_DEBUGGABLE void SerializeCompressedData(FArchive &Ar,
+FORCEINLINE_DEBUGGABLE bool SerializeCompressedData(FArchive &Ar,
                                                     TArray<uint8> &Data) {
-  // Ensure that the archive's current mode matches the operation type specified
-  // by `bLoading`. If `bLoading` is true, the archive must be in loading mode
-  // (`Ar.IsLoading()` must return true), otherwise, it must be in saving mode.
   check(Ar.IsLoading() == bLoading);
 
-  // Declare a variable to hold the size of the uncompressed data.
-  int64 UncompressedSize;
-
-  // If we are saving data (not loading), calculate the size of the uncompressed
-  // data.
+  int64 UncompressedSize = 0;
   if (!bLoading) {
-    UncompressedSize =
-        Data.Num(); // Get the number of elements in the `Data` array.
+    UncompressedSize = Data.Num();
   }
 
-  // Serialize the `UncompressedSize` to or from the archive.
-  // During saving, this writes the size into the archive.
-  // During loading, this reads the size from the archive.
   Ar << UncompressedSize;
 
-  // If we are in loading mode, allocate enough space in `Data` to hold the
-  // uncompressed data.
   if (bLoading) {
-    Data.SetNumUninitialized(UncompressedSize);
+    if (Ar.IsError() || UncompressedSize <= 0 ||
+        UncompressedSize > static_cast<int64>(MAX_int32)) {
+      UE_LOG(LogTemp, Error,
+             TEXT("SerializeSubsystem: Decompression failed — invalid or "
+                  "unreadable uncompressed size (%lld). Save file may be "
+                  "corrupted or truncated."),
+             UncompressedSize);
+      return false;
+    }
+    Data.SetNumUninitialized(static_cast<int32>(UncompressedSize));
   }
 
-  // Serialize the compressed data to or from the archive.
-  // `Data.GetData()` returns a pointer to the array's internal storage.
-  // `UncompressedSize` is the size of the uncompressed data.
-  // `NAME_Zlib` specifies the compression format used (Zlib in this case).
   Ar.SerializeCompressed(Data.GetData(), UncompressedSize, NAME_Zlib);
+
+  if (bLoading && Ar.IsError()) {
+    UE_LOG(LogTemp, Error,
+           TEXT("SerializeSubsystem: Decompression failed — archive entered "
+                "error state. Save file may be corrupted or truncated."));
+    return false;
+  }
+
+  return true;
 }
 
 // Template constructor for the `TSaveGameSerializer` class.
@@ -133,7 +131,12 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::DeserializeHeaderData(
 
   if (!bIsTextFormat) {
     FSaveGameMemoryArchive CompressorArchive(HeaderData);
-    SerializeCompressedData<true>(CompressorArchive, Data);
+    if (!SerializeCompressedData<true>(CompressorArchive, Data)) {
+      if (SerializeSubsystem.IsValid()) {
+        SerializeSubsystem->OnLoadFailed.Broadcast();
+      }
+      return;
+    }
   }
   // JSON: data was provided at construction, nothing to decompress.
 
@@ -199,6 +202,9 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::InitiateLevelLoad(
   if (MapName.IsEmpty()) {
     UE_LOG(LogTemp, Error,
            TEXT("SerializeSubsystem: Cannot load level — map name is empty."));
+    if (SerializeSubsystem.IsValid()) {
+      SerializeSubsystem->OnLoadFailed.Broadcast();
+    }
     return;
   }
 
@@ -220,7 +226,12 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::DeserializeLevelData(
     TSoftObjectPtr<ULevel> Level, TArray<uint8> &LevelData) {
   if (!bIsTextFormat) {
     FSaveGameMemoryArchive CompressorArchive(LevelData);
-    SerializeCompressedData<true>(CompressorArchive, Data);
+    if (!SerializeCompressedData<true>(CompressorArchive, Data)) {
+      if (SerializeSubsystem.IsValid()) {
+        SerializeSubsystem->OnLoadFailed.Broadcast();
+      }
+      return;
+    }
   }
   // JSON: data was provided at construction.
 
@@ -294,7 +305,12 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::
 
   if (!bIsTextFormat) {
     FSaveGameMemoryArchive CompressorArchive(StreamingLevelData);
-    SerializeCompressedData<true>(CompressorArchive, Data);
+    if (!SerializeCompressedData<true>(CompressorArchive, Data)) {
+      if (SerializeSubsystem.IsValid()) {
+        SerializeSubsystem->OnLoadFailed.Broadcast();
+      }
+      return;
+    }
   }
   // JSON: data was provided at construction.
 

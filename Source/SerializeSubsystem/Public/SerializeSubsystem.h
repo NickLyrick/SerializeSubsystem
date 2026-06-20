@@ -8,6 +8,8 @@
 
 #include "SerializeSubsystem.generated.h"
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnSaveGameLoadFailed);
+
 /**
  * The subsystem that serializes and deserializes the game world.
  */
@@ -30,6 +32,10 @@ public:
 
   UFUNCTION(BlueprintCallable, Category = "SaveGamePlugin|Load")
   bool IsLoadingSaveGame() const;
+
+  /** Fired when a load fails before it can start (e.g. missing map name, corrupted data). */
+  UPROPERTY(BlueprintAssignable, Category = "SaveGamePlugin|Load")
+  FOnSaveGameLoadFailed OnLoadFailed;
 
 #if !UE_BUILD_SHIPPING && WITH_TEXT_ARCHIVE_SUPPORT
   /**
