@@ -35,7 +35,7 @@ static_assert(sizeof(FSaveGameManifest) == 12, "FSaveGameManifest layout changed
 static TArray<uint8> CompressAndWrapBlob(const TArray<uint8> &Data) {
   TArray<uint8> Compressed;
   FMemoryWriter CompressAr(Compressed);
-  SerializeCompressedData<false>(CompressAr, Data);
+  SerializeCompressedData<false>(CompressAr, const_cast<TArray<uint8> &>(Data));
 
   FSaveGameManifest Manifest;
   Manifest.PluginVersion = static_cast<int32>(FSaveGameVersion::LatestVersion);
