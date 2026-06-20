@@ -33,6 +33,13 @@ void USerializeSubsystem::Deinitialize() {
 }
 
 void USerializeSubsystem::Save(FSerializedData &Data) {
+  if (!ensure(!IsLoadingSaveGame())) {
+    UE_LOG(LogTemp, Error,
+           TEXT("SerializeSubsystem: Save() called while a load is in "
+                "progress — ignoring."));
+    return;
+  }
+
   const TSoftObjectPtr<ULevel> Level = GetWorld()->GetCurrentLevel();
 
   { // Serialize Header Data

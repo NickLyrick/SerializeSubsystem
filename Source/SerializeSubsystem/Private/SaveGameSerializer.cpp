@@ -420,8 +420,13 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActors(
   if (!IsValid(Level))
     return;
 
+  // Snapshot SaveGameActors before any iteration. During loading, SpawnActor
+  // triggers OnActorPreSpawn → SaveGameActors.Add(), which mutates the set
+  // while NumActors is live. During saving, OnSerialize side-effects could
+  // similarly add actors. A snapshot prevents iterator invalidation in both cases.
+  const TArray<TWeakObjectPtr<AActor>> ActorsSnapshot = SaveGameActors.Array();
   TArray<AActor *> Actors;
-  int32 NumActors = SaveGameActors.Num();
+  int32 NumActors = ActorsSnapshot.Num();
 
   FStructuredArchive::FMap ActorsMap = ActorsSlot.EnterMap(NumActors);
 
@@ -431,7 +436,7 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActors(
     TMap<FGuid, AActor *> SpawnIDs;
     QUICK_SCOPE_CYCLE_COUNTER(STAT_SaveGame_InitializeActors);
 
-    for (const TWeakObjectPtr<AActor> &ActorPtr : SaveGameActors) {
+    for (const TWeakObjectPtr<AActor> &ActorPtr : ActorsSnapshot) {
       AActor *Actor = ActorPtr.Get();
       if (IsValid(Actor) && Actor->Implements<USaveGameSpawnActor>()) {
         const FGuid SpawnID = ISaveGameSpawnActor::Execute_GetSpawnID(Actor);
@@ -525,17 +530,13 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActors(
       Archive.Seek(ActorsPosition);
     }
 
-    TSet<TWeakObjectPtr<AActor>>::TConstIterator ActorsIt =
-        SaveGameActors.CreateConstIterator();
-
     for (int32 ActorIdx = 0; ActorIdx < NumActors; ++ActorIdx) {
       AActor *Actor;
 
       if (bIsLoading) {
         Actor = Actors[ActorIdx];
       } else {
-        Actor = ActorsIt->Get();
-        ++ActorsIt;
+        Actor = ActorsSnapshot[ActorIdx].Get();
       }
 
       if (!IsValid(Actor))
