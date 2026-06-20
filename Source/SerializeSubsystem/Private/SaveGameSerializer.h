@@ -13,42 +13,30 @@
 #include "SaveGameProxyArchive.h"
 #include "Serialization/MemoryReader.h"
 #include "Serialization/MemoryWriter.h"
+#include "SerializeSubsystem.h"
 #include "Templates/ChooseClass.h"
 #include "UObject/SoftObjectPath.h"
 #include "UObject/SoftObjectPtr.h"
 #include "UObject/WeakObjectPtr.h"
-
-class USerializeSubsystem;
 
 class FSaveGameSerializer : public TSharedFromThis<FSaveGameSerializer> {
 public:
   virtual ~FSaveGameSerializer() = default;
 };
 
-// TODO: This comment is incorrect
 /**
- * The class that manages serializing the world.
+ * Serializes/deserializes the game world across three separately-compressed blobs.
  *
- * Archive data structured like so:
- * - Header
- *		- Engine Versions
- * - Persistent Level #1:
- *   - Actors
- *		  - Actor Name #1:
- *			  - Class: If spawned
- *			  - SpawnID: If implements ISaveGameSpawnActor
- *			  - SaveGame Properties
- *			  - Data written by ISaveGameObject::OnSerialize
- *		  - ...
- *   - Destroyed Level Actors
- *		  - Actor Name #1
- *		  - ...
- *  - Streaming Levels
- * - Versions
- *		- Version:
- *			- ID
- *			- Version Number
- *		- ...
+ * Header blob (FSerializedData::Header):
+ *   EngineVersion, PackageVersion [binary], VersionsOffset [binary],
+ *   CustomVersions [FCustomVersionContainer, stored at VersionsOffset]
+ *
+ * Level blob (FSerializedData::Levels[L].Data) and
+ * Streaming level blob (FSerializedData::Levels[L].StreamingLevels[SL].Data):
+ *   Actors (map):
+ *     ActorName → Class [if dynamically spawned], GUID [if ISaveGameSpawnActor],
+ *                 DataSize [binary only], Properties, Components (map), Data
+ *   DestroyedActors (array): ActorName, ...
  */
 template <bool bIsLoading, bool bIsTextFormat = false>
 class TSaveGameSerializer final : public FSaveGameSerializer {
@@ -134,7 +122,7 @@ private:
 
   /** Serializes any destroyed level actors. On load, level actors will exist
    * again, so this will re-destroy them */
-  void SerializeDestroyedActors(ULevel *Level,
+  void SerializeDestroyedActors(ULevel *Level, FActorsStruct &ActorsRecord,
                                 FStructuredArchive::FSlot &DestroyedActorsSlot);
 
   /**
@@ -181,8 +169,8 @@ private:
   /** Serializes an actor's script properties, components, and custom data. */
   void SerializeActorData(AActor *Actor, FStructuredArchive::FSlot &ActorSlot);
 
-  /** Resolves SerializeSubsystem and broadcasts OnLoadFailed. */
-  void BroadcastLoadFailed();
+  /** Resolves SerializeSubsystem and calls FinalizeLoad with the given result. */
+  void BroadcastLoadFailed(ESaveGameLoadResult Result);
 
   // Internal Variables
 private:

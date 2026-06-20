@@ -8,7 +8,18 @@
 
 #include "SerializeSubsystem.generated.h"
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnSaveGameLoadFailed);
+/** Result passed to the OnLoadCompleted delegate after every load attempt. */
+UENUM(BlueprintType)
+enum class ESaveGameLoadResult : uint8 {
+  Success              UMETA(DisplayName = "Success"),
+  CorruptedData        UMETA(DisplayName = "Corrupted Data"),
+  IncompatibleVersion  UMETA(DisplayName = "Incompatible Version"),
+  EngineVersionMismatch UMETA(DisplayName = "Engine Version Mismatch"),
+  MapMissing           UMETA(DisplayName = "Map Missing"),
+};
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnSaveGameLoadCompleted,
+                                            ESaveGameLoadResult, Result);
 
 /**
  * The subsystem that serializes and deserializes the game world.
@@ -33,9 +44,12 @@ public:
   UFUNCTION(BlueprintCallable, Category = "SaveGamePlugin|Load")
   bool IsLoadingSaveGame() const;
 
-  /** Fired when a load fails before it can start (e.g. missing map name, corrupted data). */
+  /**
+   * Fired when a load attempt finishes — successfully or otherwise.
+   * Check the Result parameter to distinguish success from each failure mode.
+   */
   UPROPERTY(BlueprintAssignable, Category = "SaveGamePlugin|Load")
-  FOnSaveGameLoadFailed OnLoadFailed;
+  FOnSaveGameLoadCompleted OnLoadCompleted;
 
 #if !UE_BUILD_SHIPPING && WITH_TEXT_ARCHIVE_SUPPORT
   /**
@@ -67,7 +81,7 @@ protected:
   void OnActorDestroyed(AActor *Actor);
 
   // Deferred Event Handlers
-  void OnLoadCompleted();
+  void FinalizeLoad(ESaveGameLoadResult Result);
 
 private:
   template <bool, bool> friend class TSaveGameSerializer;

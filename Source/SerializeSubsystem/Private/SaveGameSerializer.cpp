@@ -7,11 +7,13 @@
 
 #include "SaveGameFunctionLibrary.h"
 #include "SaveGameObject.h"
+#include "SaveGameSettings.h"
 #include "SaveGameVersion.h"
-#include "SerializeSubsystem.h"
 
 #include "PlatformFeatures.h"
 #include "SaveGameSystem.h"
+
+DEFINE_LOG_CATEGORY_STATIC(LogSaveGame, Log, All);
 
 #define LEVEL_SUBPATH_PREFIX TEXT("PersistentLevel.")
 
@@ -30,10 +32,9 @@ FORCEINLINE_DEBUGGABLE bool SerializeCompressedData(FArchive &Ar,
   if constexpr (bLoading) {
     if (Ar.IsError() || UncompressedSize <= 0 ||
         UncompressedSize > static_cast<int64>(MAX_int32)) {
-      UE_LOG(LogTemp, Error,
-             TEXT("SerializeSubsystem: Decompression failed — invalid or "
-                  "unreadable uncompressed size (%lld). Save file may be "
-                  "corrupted or truncated."),
+      UE_LOG(LogSaveGame, Error,
+             TEXT("Decompression failed — invalid or unreadable uncompressed "
+                  "size (%lld). Save file may be corrupted or truncated."),
              UncompressedSize);
       Ar.SetError();
       return false;
@@ -45,9 +46,9 @@ FORCEINLINE_DEBUGGABLE bool SerializeCompressedData(FArchive &Ar,
 
   if constexpr (bLoading) {
     if (Ar.IsError()) {
-      UE_LOG(LogTemp, Error,
-             TEXT("SerializeSubsystem: Decompression failed — archive entered "
-                  "error state. Save file may be corrupted or truncated."));
+      UE_LOG(LogSaveGame, Error,
+             TEXT("Decompression failed — archive entered error state. Save "
+                  "file may be corrupted or truncated."));
       return false;
     }
   }
@@ -55,13 +56,6 @@ FORCEINLINE_DEBUGGABLE bool SerializeCompressedData(FArchive &Ar,
   return true;
 }
 
-// Template constructor for the `TSaveGameSerializer` class.
-// This constructor initializes various members to facilitate structured
-// serialization or deserialization. The template parameters:
-// - `bIsLoading`: Indicates whether this serializer is for loading (true) or
-// saving (false).
-// - `bIsTextFormat`: Specifies if the format used is text-based (true) or
-// binary (false).
 template <bool bIsLoading, bool bIsTextFormat>
 TSaveGameSerializer<bIsLoading, bIsTextFormat>::TSaveGameSerializer(
     USerializeSubsystem *InSerializeSubsystem, TArray<uint8> InInitialData)
@@ -81,7 +75,6 @@ TSaveGameSerializer<bIsLoading, bIsTextFormat>::TSaveGameSerializer(
 {
   static_cast<FArchive &>(ProxyArchive).SetIsTextFormat(bIsTextFormat);
 
-  // TODO: Look
   Archive.UsingCustomVersion(FSaveGameVersion::GUID);
 }
 
@@ -101,6 +94,7 @@ TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeHeaderData() {
   check(SerializeSubsystem.IsValid());
 
   SerializeHeader();
+  SerializeVersions();
 
   // Be sure to close this, as you'll be missing closed braces for JSON
   // archives
@@ -135,13 +129,33 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::DeserializeHeaderData(
   if (!bIsTextFormat) {
     FSaveGameMemoryArchive CompressorArchive(HeaderData);
     if (!SerializeCompressedData<true>(CompressorArchive, Data)) {
-      BroadcastLoadFailed();
+      BroadcastLoadFailed(ESaveGameLoadResult::CorruptedData);
       return;
     }
   }
   // JSON: data was provided at construction, nothing to decompress.
 
   SerializeHeader();
+
+  const USaveGameSettings *Settings = GetDefault<USaveGameSettings>();
+  if (!Settings->bAllowLoadingFromIncompatibleEngineVersion &&
+      !ProxyArchive.EngineVer().IsCompatibleWith(FEngineVersion::Current())) {
+    UE_LOG(LogSaveGame, Warning,
+           TEXT("Save was created with engine version %s; current is %s. "
+                "Blocking load. Enable bAllowLoadingFromIncompatibleEngineVersion "
+                "in SaveGame project settings to override."),
+           *ProxyArchive.EngineVer().ToString(),
+           *FEngineVersion::Current().ToString());
+    BroadcastLoadFailed(ESaveGameLoadResult::EngineVersionMismatch);
+    return;
+  }
+
+  if constexpr (!bIsTextFormat) {
+    if (VersionOffset != 0) {
+      Archive.Seek(VersionOffset);
+    }
+  }
+  SerializeVersions();
 }
 
 template <bool bIsLoading, bool bIsTextFormat>
@@ -150,6 +164,7 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::DeserializeHeaderData() {
                 "No-param DeserializeHeaderData is for JSON loading only. "
                 "For binary loading use DeserializeHeaderData(TArray<uint8>&).");
   SerializeHeader();
+  SerializeVersions();
 }
 
 template <bool bIsLoading, bool bIsTextFormat>
@@ -201,9 +216,9 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::InitiateLevelLoad(
       Level->GetOutermost()->GetLoadedPath().GetPackageName();
 
   if (MapName.IsEmpty()) {
-    UE_LOG(LogTemp, Error,
-           TEXT("SerializeSubsystem: Cannot load level — map name is empty."));
-    BroadcastLoadFailed();
+    UE_LOG(LogSaveGame, Error,
+           TEXT("Cannot load level — map name is empty."));
+    BroadcastLoadFailed(ESaveGameLoadResult::MapMissing);
     return;
   }
 
@@ -226,7 +241,7 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::DeserializeLevelData(
   if (!bIsTextFormat) {
     FSaveGameMemoryArchive CompressorArchive(LevelData);
     if (!SerializeCompressedData<true>(CompressorArchive, Data)) {
-      BroadcastLoadFailed();
+      BroadcastLoadFailed(ESaveGameLoadResult::CorruptedData);
       return;
     }
   }
@@ -303,7 +318,7 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::
   if (!bIsTextFormat) {
     FSaveGameMemoryArchive CompressorArchive(StreamingLevelData);
     if (!SerializeCompressedData<true>(CompressorArchive, Data)) {
-      BroadcastLoadFailed();
+      BroadcastLoadFailed(ESaveGameLoadResult::CorruptedData);
       return;
     }
   }
@@ -335,7 +350,7 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::OnMapLoad(UWorld *World) {
 
   SerializeLevel(World->GetCurrentLevel());
 
-  SerializeSubsystem->OnLoadCompleted();
+  SerializeSubsystem->FinalizeLoad(ESaveGameLoadResult::Success);
 
   TRACE_BOOKMARK(TEXT("End: LoadSaveGame[%s]"),
                  bIsTextFormat ? TEXT("Text") : TEXT("Binary"));
@@ -390,7 +405,9 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeLevel(
 
     FStructuredArchive::FSlot DestroyedActorsSlot =
         RootRecord.EnterField(TEXT("DestroyedActors"));
-    SerializeDestroyedActors(Level.Get(), DestroyedActorsSlot);
+    SerializeDestroyedActors(Level.Get(),
+                             *SerializeSubsystem->PersistentLevelRecord->Actors,
+                             DestroyedActorsSlot);
   }
 }
 
@@ -403,17 +420,18 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeStreamingLevel(
     FStructuredArchive::FSlot ActorsSlot =
         RootRecord.EnterField(TEXT("Actors"));
 
+    FActorsStruct &StreamingActors = *SerializeSubsystem->PersistentLevelRecord
+                                          ->StreamingLevels[StreamingLevel]
+                                          ->Actors;
+
     SerializeActors(StreamingLevel->GetLoadedLevel(),
-                    SerializeSubsystem->PersistentLevelRecord
-                        ->StreamingLevels[StreamingLevel]
-                        ->Actors->SaveGame,
+                    StreamingActors.SaveGame,
                     ActorsSlot);
 
-    // TODO: Ensure that is working
     FStructuredArchive::FSlot DestroyedActorsSlot =
         RootRecord.EnterField(TEXT("DestroyedActors"));
     SerializeDestroyedActors(StreamingLevel->GetLoadedLevel(),
-                             DestroyedActorsSlot);
+                             StreamingActors, DestroyedActorsSlot);
   }
 }
 
@@ -452,6 +470,11 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActors(
       if (IsValid(Actor) && Actor->Implements<USaveGameSpawnActor>()) {
         const FGuid SpawnID = ISaveGameSpawnActor::Execute_GetSpawnID(Actor);
         if (SpawnID.IsValid()) {
+          ensureMsgf(!SpawnIDs.Contains(SpawnID),
+                     TEXT("SerializeSubsystem: SpawnID collision — %s and %s "
+                          "share SpawnID %s."),
+                     *Actor->GetName(), *SpawnIDs[SpawnID]->GetName(),
+                     *SpawnID.ToString());
           SpawnIDs.Add(SpawnID, Actor);
         }
       }
@@ -476,9 +499,9 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActors(
               UClass *ActorClass = Class.TryLoadClass<AActor>();
 
               if (!ActorClass) {
-                UE_LOG(LogTemp, Error,
-                       TEXT("SerializeSubsystem: Failed to load class '%s' for "
-                            "actor '%s' — actor will be skipped."),
+                UE_LOG(LogSaveGame, Error,
+                       TEXT("Failed to load class '%s' for actor '%s' — "
+                            "actor will be skipped."),
                        *Class.ToString(), *ActorName);
                 return;
               }
@@ -513,9 +536,9 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActors(
             // the actor, while ActorSlot is still open.
             if constexpr (bIsTextFormat) {
               if (!IsValid(Actor)) {
-                UE_LOG(LogTemp, Warning,
-                       TEXT("SerializeSubsystem: Actor '%s' is invalid after "
-                            "spawn/find — skipping property deserialization."),
+                UE_LOG(LogSaveGame, Warning,
+                       TEXT("Actor '%s' is invalid after spawn/find — "
+                            "skipping property deserialization."),
                        *ActorName);
                 return;
               }
@@ -564,9 +587,10 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActors(
 }
 
 template <bool bIsLoading, bool bIsTextFormat>
-void TSaveGameSerializer<bIsLoading, bIsTextFormat>::BroadcastLoadFailed() {
+void TSaveGameSerializer<bIsLoading, bIsTextFormat>::BroadcastLoadFailed(
+    ESaveGameLoadResult Result) {
   if (USerializeSubsystem *Sub = SerializeSubsystem.Get()) {
-    Sub->OnLoadFailed.Broadcast();
+    Sub->FinalizeLoad(Result);
   }
 }
 
@@ -611,56 +635,48 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActorComponents(
 
 template <bool bIsLoading, bool bIsTextFormat>
 void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeDestroyedActors(
-    ULevel *Level, FStructuredArchive::FSlot &DestroyedActorsSlot) {
+    ULevel *Level, FActorsStruct &ActorsRecord,
+    FStructuredArchive::FSlot &DestroyedActorsSlot) {
   QUICK_SCOPE_CYCLE_COUNTER(STAT_SaveGame_SerializeDestroyedActors);
-  check(SerializeSubsystem.IsValid());
   check(IsValid(Level));
-
-  const TSharedPtr<FLevelStruct> LevelRecord =
-      SerializeSubsystem->PersistentLevelRecord;
 
   int32 NumDestroyedActors;
 
-  if (!bIsLoading) {
-    NumDestroyedActors = LevelRecord->Actors->Destroyed.Num();
+  if constexpr (!bIsLoading) {
+    NumDestroyedActors = ActorsRecord.Destroyed.Num();
   }
 
   FStructuredArchive::FArray DestroyedActorsArray =
       DestroyedActorsSlot.EnterArray(NumDestroyedActors);
 
-  if (LevelRecord->Actors->Destroyed.IsEmpty())
-    return;
+  if constexpr (!bIsLoading) {
+    if (ActorsRecord.Destroyed.IsEmpty())
+      return;
+  }
 
-  if (bIsLoading) {
-    // Allocate our expected number of actors
-    LevelRecord->Actors->Destroyed.Reset();
-    LevelRecord->Actors->Destroyed.Reserve(NumDestroyedActors);
+  if constexpr (bIsLoading) {
+    ActorsRecord.Destroyed.Reset();
+    ActorsRecord.Destroyed.Reserve(NumDestroyedActors);
   }
 
   TSet<FSoftObjectPath>::TConstIterator DestroyedActorsIt =
-      LevelRecord->Actors->Destroyed.CreateConstIterator();
+      ActorsRecord.Destroyed.CreateConstIterator();
 
   for (int32 ActorIdx = 0; ActorIdx < NumDestroyedActors; ++ActorIdx) {
     FName ActorName;
 
-    if (!bIsLoading) {
-      // Only store the object name without the prefix and full path
+    if constexpr (!bIsLoading) {
       FString ActorSubPath = DestroyedActorsIt->GetSubPathString();
       ActorSubPath.RemoveFromStart(LEVEL_SUBPATH_PREFIX);
       ActorName = *ActorSubPath;
-
       ++DestroyedActorsIt;
     }
 
     DestroyedActorsArray.EnterElement() << ActorName;
 
-    if (bIsLoading) {
-      // Find the live actor in the level
+    if constexpr (bIsLoading) {
       if (AActor *DestroyedActor = FindObjectFast<AActor>(Level, ActorName)) {
-        // Be sure to add any valid destroyed actors back into the array for
-        // saving later!
-        LevelRecord->Actors->Destroyed.Add(DestroyedActor);
-
+        ActorsRecord.Destroyed.Add(DestroyedActor);
         DestroyedActor->Destroy();
       }
     }
@@ -671,33 +687,41 @@ template <bool bIsLoading, bool bIsTextFormat>
 void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeVersions() {
   QUICK_SCOPE_CYCLE_COUNTER(STAT_SaveGame_SerializeVersions);
 
-  if (!bIsTextFormat) {
-    // Store the version position so that we can serialize it in the header
+  if constexpr (!bIsTextFormat) {
     VersionOffset = Archive.Tell();
   }
 
   FCustomVersionContainer VersionContainer;
 
-  if (!bIsLoading) {
-    // Grab a copy of our archive's current versions
+  if constexpr (!bIsLoading) {
     VersionContainer = Archive.GetCustomVersions();
   }
 
   VersionContainer.Serialize(RootRecord.EnterField(TEXT("Versions")));
 
-  if (bIsLoading) {
-    // Assign our serialized versions
+  if constexpr (bIsLoading) {
     Archive.SetCustomVersions(VersionContainer);
+
+    const FCustomVersion *PluginVersion =
+        VersionContainer.GetVersion(FSaveGameVersion::GUID);
+    if (PluginVersion &&
+        PluginVersion->Version <
+            static_cast<int32>(FSaveGameVersion::MinCompatibleVersion)) {
+      UE_LOG(LogSaveGame, Error,
+             TEXT("Save file plugin version %d is below minimum compatible "
+                  "version %d — cannot load."),
+             PluginVersion->Version,
+             static_cast<int32>(FSaveGameVersion::MinCompatibleVersion));
+      BroadcastLoadFailed(ESaveGameLoadResult::IncompatibleVersion);
+      return;
+    }
   }
 
-  if (!bIsTextFormat) {
-    uint64 CurrentOffset = Archive.Tell();
-
-    // We've updated the VersionOffset, let's go back to the start and rewrite
-    // the header
+  if constexpr (!bIsTextFormat) {
+    const uint64 CurrentOffset = Archive.Tell();
+    // Patch the header so VersionsOffset points at the data we just wrote.
     Archive.Seek(HeaderOffset);
     SerializeHeader();
-
     Archive.Seek(CurrentOffset);
   }
 }

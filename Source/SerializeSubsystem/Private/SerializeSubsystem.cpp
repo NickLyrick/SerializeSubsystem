@@ -361,13 +361,11 @@ void USerializeSubsystem::OnActorDestroyed(AActor *Actor) {
   }
 }
 
-// This is called after the persistent level is loaded and all data on the
-// persistent level is deserialized
-void USerializeSubsystem::OnLoadCompleted() {
+void USerializeSubsystem::FinalizeLoad(ESaveGameLoadResult Result) {
   CurrentSerializer = nullptr;
 
-  // On this point, we have all the data from the persistent level loaded, and
-  // we can load the streaming levels
-  if (SerializedData.IsValid())
+  OnLoadCompleted.Broadcast(Result);
+
+  if (Result == ESaveGameLoadResult::Success && SerializedData.IsValid())
     LoadStreamingLevels();
 }

@@ -37,6 +37,14 @@ public:
 
 protected:
   /**
+   * When false (default), loading a save that was created on a different engine
+   * version is rejected with ESaveGameLoadResult::EngineVersionMismatch.
+   * Set true only to allow cross-engine loading during development.
+   */
+  UPROPERTY(EditAnywhere, Config, Category = Version)
+  bool bAllowLoadingFromIncompatibleEngineVersion = false;
+
+  /**
    * The list of possible versions and their corresponding enums. Must add
    * versions here before calling USaveGameFunctionLibrary::UseCustomVersion
    */
