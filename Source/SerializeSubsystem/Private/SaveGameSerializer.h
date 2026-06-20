@@ -14,7 +14,7 @@
 #include "Serialization/MemoryReader.h"
 #include "Serialization/MemoryWriter.h"
 #include "SerializeSubsystem.h"
-#include "Templates/ChooseClass.h"
+#include <type_traits>
 #include "UObject/SoftObjectPath.h"
 #include "UObject/SoftObjectPtr.h"
 #include "UObject/WeakObjectPtr.h"
@@ -41,17 +41,16 @@ public:
 template <bool bIsLoading, bool bIsTextFormat = false>
 class TSaveGameSerializer final : public FSaveGameSerializer {
   using FSaveGameMemoryArchive =
-      typename TChooseClass<bIsLoading, FMemoryReader, FMemoryWriter>::Result;
+      std::conditional_t<bIsLoading, FMemoryReader, FMemoryWriter>;
 
   static_assert(WITH_TEXT_ARCHIVE_SUPPORT || !bIsTextFormat,
                 "Engine isn't compiled with text archive support, cannot use "
                 "text based TSaveGameSerializer");
 
-  using FSaveGameFormatter = typename TChooseClass<
+  using FSaveGameFormatter = std::conditional_t<
       bIsTextFormat && WITH_TEXT_ARCHIVE_SUPPORT,
-      typename TChooseClass<bIsLoading, FJsonArchiveInputFormatter,
-                            FJsonArchiveOutputFormatter>::Result,
-      FBinaryArchiveFormatter>::Result;
+      std::conditional_t<bIsLoading, FJsonArchiveInputFormatter, FJsonArchiveOutputFormatter>,
+      FBinaryArchiveFormatter>;
 
 public:
   /**

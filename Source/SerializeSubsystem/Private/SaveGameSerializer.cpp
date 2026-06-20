@@ -18,6 +18,9 @@ DEFINE_LOG_CATEGORY_STATIC(LogSaveGame, Log, All);
 
 #define LEVEL_SUBPATH_PREFIX TEXT("PersistentLevel.")
 
+template <bool bLoading>
+FORCEINLINE_DEBUGGABLE bool SerializeCompressedData(FArchive &Ar, TArray<uint8> &Data);
+
 // Fixed-size manifest written at the front of every binary blob (before compressed data).
 // Readable without decompression — allows fast rejection of incompatible or corrupt files.
 struct FSaveGameManifest {
@@ -48,7 +51,7 @@ static TArray<uint8> CompressAndWrapBlob(const TArray<uint8> &Data) {
 // Load path: validates manifest magic and CRC.
 // On Success, CompressorArchive is positioned past the manifest, ready for SerializeCompressedData.
 static ESaveGameLoadResult ValidateManifest(const TArray<uint8> &Blob,
-                                            FMemoryReader &CompressorArchive) {
+                                            FArchive &CompressorArchive) {
   if (Blob.Num() < static_cast<int32>(sizeof(FSaveGameManifest))) {
     UE_LOG(LogSaveGame, Error, TEXT("Blob too small to contain manifest header."));
     return ESaveGameLoadResult::CorruptedData;
