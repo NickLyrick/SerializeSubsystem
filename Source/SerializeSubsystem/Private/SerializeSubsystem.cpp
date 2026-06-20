@@ -33,10 +33,9 @@ void USerializeSubsystem::Deinitialize() {
 }
 
 void USerializeSubsystem::Save(FSerializedData &Data) {
-  if (!ensure(!IsLoadingSaveGame())) {
-    UE_LOG(LogTemp, Error,
-           TEXT("SerializeSubsystem: Save() called while a load is in "
-                "progress — ignoring."));
+  if (!ensureMsgf(!IsLoadingSaveGame(),
+                  TEXT("SerializeSubsystem: Save() called while a load is in "
+                       "progress — ignoring."))) {
     return;
   }
 
@@ -79,6 +78,12 @@ void USerializeSubsystem::Save(FSerializedData &Data) {
 }
 
 void USerializeSubsystem::Load(FSerializedData Data) {
+  if (!ensureMsgf(!IsLoadingSaveGame(),
+                  TEXT("SerializeSubsystem: Load() called while a load is in "
+                       "progress — ignoring."))) {
+    return;
+  }
+
   *SerializedData = Data;
 
   {

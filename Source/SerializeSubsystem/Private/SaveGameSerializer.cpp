@@ -533,7 +533,7 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActors(
     for (int32 ActorIdx = 0; ActorIdx < NumActors; ++ActorIdx) {
       AActor *Actor;
 
-      if (bIsLoading) {
+      if constexpr (bIsLoading) {
         Actor = Actors[ActorIdx];
       } else {
         Actor = ActorsSnapshot[ActorIdx].Get();
