@@ -3,7 +3,6 @@
 #include "CoreMinimal.h"
 
 #include "Engine/DeveloperSettings.h"
-#include "SaveGameMigrationStep.h"
 #include "StructUtils/InstancedStruct.h"
 
 #include "SaveGameSettings.generated.h"

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+
 #include "UObject/Interface.h"
 
 #include "SaveGameObject.generated.h"
@@ -23,16 +24,25 @@ struct SERIALIZESUBSYSTEM_API FSaveGameArchive
 
 public:
 	FSaveGameArchive()
-	    : Record(nullptr), Object(nullptr), StartPosition(0), EndPosition(0)
+	    : Record(nullptr),
+	      Object(nullptr),
+	      StartPosition(0),
+	      EndPosition(0)
 	{
 	}
 
 	FSaveGameArchive(class FStructuredArchive::FRecord& InRecord, UObject* InObject);
 	~FSaveGameArchive();
 
-	bool IsValid() const { return Record != nullptr; }
+	bool IsValid() const
+	{
+		return Record != nullptr;
+	}
 
-	class FStructuredArchive::FRecord& GetRecord() const { return *Record; }
+	class FStructuredArchive::FRecord& GetRecord() const
+	{
+		return *Record;
+	}
 
 	/**
 	 * Serializes a named field using the provided lambda.
@@ -73,6 +83,25 @@ public:
 				Fields.Add(FieldName, Archive.Tell() - StartPosition);
 			}
 		}
+		else if (Archive.IsLoading())
+		{
+			// FJsonArchiveInputFormatter::EnterField does check(Field.IsValid()) and
+			// crashes when the field is absent. TryEnterField returns an empty optional
+			// instead, matching the binary path's graceful missing-field handling.
+			TOptional<FStructuredArchive::FSlot> Slot = Record->TryEnterField(*FieldName.ToString(), false);
+			if (!Slot.IsSet())
+			{
+				return false;
+			}
+			SerializeFunction(Slot.GetValue());
+			return true;
+		}
+		else
+		{
+			// JSON saving: track field names so the IsSaving dedup check above fires
+			// on duplicate calls, mirroring binary mode behaviour.
+			Fields.Add(FieldName, 0);
+		}
 
 		SerializeFunction(Record->EnterField(*FieldName.ToString()));
 
@@ -83,9 +112,9 @@ private:
 	FSaveGameArchive(FSaveGameArchive&) = delete;
 
 	class FStructuredArchive::FRecord* Record;
-	TWeakObjectPtr<>                   Object;
-	uint64                             StartPosition;
-	uint64                             EndPosition;
+	TWeakObjectPtr<> Object;
+	uint64 StartPosition;
+	uint64 EndPosition;
 
 	TMap<FName, uint64> Fields;
 };
@@ -93,7 +122,10 @@ private:
 template <>
 struct TStructOpsTypeTraits<FSaveGameArchive> : public TStructOpsTypeTraitsBase2<FSaveGameArchive>
 {
-	enum { WithCopy = false };
+	enum
+	{
+		WithCopy = false
+	};
 };
 
 UINTERFACE(MinimalAPI)

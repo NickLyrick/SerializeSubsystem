@@ -11,14 +11,12 @@
 #include "Components/ActorComponent.h"
 #include "Engine/Level.h"
 #include "Engine/LevelStreaming.h"
-#include "SaveGameMigrationStep.h"
 #include "SaveGameProxyArchive.h"
 #include "Serialization/MemoryReader.h"
 #include "Serialization/MemoryWriter.h"
 #include "SerializeSubsystem.h"
 #include "UObject/SoftObjectPath.h"
 #include "UObject/SoftObjectPtr.h"
-#include "UObject/WeakObjectPtr.h"
 #include <type_traits>
 
 class FSaveGameSerializer : public TSharedFromThis<FSaveGameSerializer>
@@ -98,18 +96,24 @@ private:
 	void SerializeStreamingLevel(const TSoftObjectPtr<ULevelStreaming>& StreamingLevel);
 
 private:
-	void SerializeActors(ULevel* Level, TSet<TWeakObjectPtr<AActor>>& SaveGameActors, FStructuredArchive::FSlot& ActorsSlot);
+	void
+	SerializeActors(ULevel* Level, TSet<TWeakObjectPtr<AActor>>& SaveGameActors, FStructuredArchive::FSlot& ActorsSlot);
 	void SerializeActorComponents(AActor*& Actor, FStructuredArchive::FSlot& ActorSlot);
-	void SerializeDestroyedActors(ULevel* Level, FActorsStruct& ActorsRecord, FStructuredArchive::FSlot& DestroyedActorsSlot);
+	void SerializeDestroyedActors(ULevel* Level,
+	                              FActorsStruct& ActorsRecord,
+	                              FStructuredArchive::FSlot& DestroyedActorsSlot);
 	void SerializeVersions();
 
 	// BodyFunction is called after header fields (ActorName, Class, SpawnID) are read/written.
 	// Binary mode: also writes/reads DataSize around BodyFunction for skip-on-corruption.
-	void SerializeActor(FStructuredArchive::FMap& ActorMap,
-	                    AActor*& Actor,
-	                    TFunction<void(const FString&, const FSoftClassPath&, const FGuid&, FStructuredArchive::FSlot&)>&& BodyFunction);
+	void
+	SerializeActor(FStructuredArchive::FMap& ActorMap,
+	               AActor*& Actor,
+	               TFunction<void(const FString&, const FSoftClassPath&, const FGuid&, FStructuredArchive::FSlot&)>&&
+	                   BodyFunction);
 
-	void SerializeActorComponent(FStructuredArchive::FMap& ComponentsMap, TSoftObjectPtr<UActorComponent>& ActorComponent);
+	void SerializeActorComponent(FStructuredArchive::FMap& ComponentsMap,
+	                             TSoftObjectPtr<UActorComponent>& ActorComponent);
 	void SerializeActorData(AActor* Actor, FStructuredArchive::FSlot& ActorSlot);
 	void BroadcastLoadFailed(ESaveGameLoadResult Result);
 
@@ -120,13 +124,13 @@ private:
 	// and Archive before ProxyArchive, ProxyArchive before Formatter, Formatter before StructuredArchive.
 	// For JSON loading, Data must also be populated before Formatter construction
 	// because FJsonArchiveInputFormatter parses the JSON eagerly in its constructor.
-	TArray<uint8>                     Data = {};
-	FSaveGameMemoryArchive            Archive;
+	TArray<uint8> Data = {};
+	FSaveGameMemoryArchive Archive;
 	TSaveGameProxyArchive<bIsLoading> ProxyArchive;
-	FSaveGameFormatter                Formatter;
-	FStructuredArchive                StructuredArchive;
-	FStructuredArchive::FSlot         RootSlot;
-	FStructuredArchive::FRecord       RootRecord;
+	FSaveGameFormatter Formatter;
+	FStructuredArchive StructuredArchive;
+	FStructuredArchive::FSlot RootSlot;
+	FStructuredArchive::FRecord RootRecord;
 
 	// VersionsOffset: position of the version table inside the binary blob.
 	// Written into the header so DeserializeHeaderData can seek directly to version

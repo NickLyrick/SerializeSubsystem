@@ -16,9 +16,9 @@
  * without requiring an engine restart or config change.
  */
 template <bool bIsLoading>
-struct TSaveGameProxyArchive final : public FNameAsStringProxyArchive
+struct TSaveGameProxyArchive final : FNameAsStringProxyArchive
 {
-	TSaveGameProxyArchive(FArchive& InInnerArchive)
+	explicit TSaveGameProxyArchive(FArchive& InInnerArchive)
 	    : FNameAsStringProxyArchive(InInnerArchive)
 	{
 		// Tells Serialize() methods to only process UPROPERTY(SaveGame) fields.
@@ -70,9 +70,18 @@ struct TSaveGameProxyArchive final : public FNameAsStringProxyArchive
 		return *this;
 	}
 
-	virtual FArchive& operator<<(UObject*& Value) override    { return SerializeObject(Value); }
-	virtual FArchive& operator<<(FWeakObjectPtr& Value) override { return SerializeObject(Value); }
-	virtual FArchive& operator<<(FObjectPtr& Value) override  { return SerializeObject(Value); }
+	virtual FArchive& operator<<(UObject*& Value) override
+	{
+		return SerializeObject(Value);
+	}
+	virtual FArchive& operator<<(FWeakObjectPtr& Value) override
+	{
+		return SerializeObject(Value);
+	}
+	virtual FArchive& operator<<(FObjectPtr& Value) override
+	{
+		return SerializeObject(Value);
+	}
 
 private:
 	TMap<FSoftObjectPath, FSoftObjectPath> Redirects;

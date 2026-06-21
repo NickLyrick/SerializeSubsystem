@@ -38,36 +38,45 @@ void USerializeSubsystem::Save(FSerializedData& Data)
 		return;
 	}
 
+	const bool bTextFormat = Data.bIsTextFormat;
 	const TSoftObjectPtr<ULevel> Level = GetWorld()->GetCurrentLevel();
 
-	{ // Serialize Header Data
-		TSaveGameSerializer<false> BinarySerializer(this);
-		SerializedData->Header = BinarySerializer.SerializeHeaderData();
-	}
-
-	{ // Serialize Level Data
-		TSaveGameSerializer<false> BinarySerializer(this);
+#if !UE_BUILD_SHIPPING && WITH_TEXT_ARCHIVE_SUPPORT
+	if (bTextFormat)
+	{
+		{
+			TSaveGameSerializer<false, true> S(this);
+			SerializedData->Header = S.SerializeHeaderData();
+		}
 
 		SerializedData->LevelName = Level->GetOutermost()->GetLoadedPath().GetPackageName();
-
 		SerializedData->Levels.FindOrAdd(SerializedData->LevelName);
-		SerializedData->Levels[SerializedData->LevelName].Data = BinarySerializer.SerializeLevelData(Level);
-	}
 
-#if !UE_BUILD_SHIPPING && WITH_TEXT_ARCHIVE_SUPPORT
-	// This is for debug purposes only, we want to use binary serialization
-	// for smallest file sizes
-	{
-		TSaveGameSerializer<false, true> TextSerializer(this);
-		TextSerializer.SerializeHeaderData();
-	}
+		{
+			TSaveGameSerializer<false, true> S(this);
+			SerializedData->Levels[SerializedData->LevelName].Data = S.SerializeLevelData(Level);
+		}
 
-	{
-		TSaveGameSerializer<false, true> TextSerializer(this);
-
-		TextSerializer.SerializeLevelData(Level.Get());
+		SerializedData->bIsTextFormat = true;
 	}
+	else
 #endif
+	{
+		{
+			TSaveGameSerializer<false> BinarySerializer(this);
+			SerializedData->Header = BinarySerializer.SerializeHeaderData();
+		}
+
+		SerializedData->LevelName = Level->GetOutermost()->GetLoadedPath().GetPackageName();
+		SerializedData->Levels.FindOrAdd(SerializedData->LevelName);
+
+		{
+			TSaveGameSerializer<false> BinarySerializer(this);
+			SerializedData->Levels[SerializedData->LevelName].Data = BinarySerializer.SerializeLevelData(Level);
+		}
+
+		SerializedData->bIsTextFormat = false;
+	}
 
 	// Serialize Streaming Levels Data
 	SaveStreamingLevels();
@@ -75,7 +84,7 @@ void USerializeSubsystem::Save(FSerializedData& Data)
 	Data = *SerializedData;
 }
 
-void USerializeSubsystem::Load(FSerializedData Data)
+void USerializeSubsystem::Load(const FSerializedData Data)
 {
 	if (!ensureMsgf(!IsLoadingSaveGame(),
 	                TEXT("SerializeSubsystem: Load() called while a load is in "
@@ -87,6 +96,25 @@ void USerializeSubsystem::Load(FSerializedData Data)
 	*SerializedData = Data;
 	PendingDefaultMigrations.Reset();
 	PendingDefaultMigrationClasses.Reset();
+
+#if !UE_BUILD_SHIPPING && WITH_TEXT_ARCHIVE_SUPPORT
+	if (Data.bIsTextFormat)
+	{
+		// Header: temporary serializer, applies custom versions; no need to keep alive.
+		// FJsonArchiveInputFormatter parses JSON eagerly at construction, so each block
+		// needs its own serializer instance with its own byte buffer.
+		TSaveGameSerializer<true, true> HeaderSerializer(this, SerializedData->Header);
+		HeaderSerializer.DeserializeHeaderData();
+
+		// Level: must stay alive across SeamlessTravel until OnMapLoad fires.
+		const TSharedRef<TSaveGameSerializer<true, true>> JsonSerializer =
+		    MakeShared<TSaveGameSerializer<true, true>>(this, SerializedData->Levels[SerializedData->LevelName].Data);
+		CurrentSerializer = JsonSerializer.ToSharedPtr();
+
+		JsonSerializer->DeserializeLevelData(SerializedData->LevelName);
+		return;
+	}
+#endif
 
 	{
 		TSaveGameSerializer<true> BinarySerializer(this);
@@ -114,29 +142,6 @@ bool USerializeSubsystem::IsLoadingSaveGame() const
 	return CurrentSerializer.IsValid();
 }
 
-#if !UE_BUILD_SHIPPING && WITH_TEXT_ARCHIVE_SUPPORT
-void USerializeSubsystem::LoadFromJson(TArray<uint8> JsonLevelData)
-{
-	// Derive LevelName from the current world if it wasn't set by a prior Save()
-	// call this PIE session — empty LevelName causes InitiateLevelLoad to fail silently.
-	if (SerializedData->LevelName.IsEmpty())
-	{
-		if (UWorld* World = GetWorld())
-		{
-			SerializedData->LevelName = World->GetCurrentLevel()->GetOutermost()->GetLoadedPath().GetPackageName();
-		}
-	}
-
-	// FJsonArchiveInputFormatter parses JSON eagerly in its constructor, so the
-	// data must be passed upfront rather than provided via DeserializeLevelData.
-	const TSharedRef<TSaveGameSerializer<true, true>> JsonSerializer =
-	    MakeShared<TSaveGameSerializer<true, true>>(this, MoveTemp(JsonLevelData));
-	CurrentSerializer = JsonSerializer.ToSharedPtr();
-
-	JsonSerializer->DeserializeLevelData(SerializedData->LevelName);
-}
-#endif
-
 // Used to serialize the streaming levels data
 void USerializeSubsystem::SaveStreamingLevels()
 {
@@ -158,15 +163,20 @@ void USerializeSubsystem::SaveStreamingLevels()
 			continue;
 
 		// Actually serialize the streaming level data
-		TSaveGameSerializer<false> BinarySerializer(this);
-		SerializedData->Levels.FindOrAdd(LevelName).StreamingLevels.FindOrAdd(StreamingLevel.Key).Data =
-		    BinarySerializer.SerializeStreamingLevelData(StreamingLevel.Key);
-
 #if !UE_BUILD_SHIPPING && WITH_TEXT_ARCHIVE_SUPPORT
-		// And for Testing purposes, save some streaming levels data in text format
-		TSaveGameSerializer<false, true> TextSerializer(this);
-		TextSerializer.SerializeStreamingLevelData(StreamingLevel.Key);
+		if (SerializedData->bIsTextFormat)
+		{
+			TSaveGameSerializer<false, true> S(this);
+			SerializedData->Levels.FindOrAdd(LevelName).StreamingLevels.FindOrAdd(StreamingLevel.Key).Data =
+			    S.SerializeStreamingLevelData(StreamingLevel.Key);
+		}
+		else
 #endif
+		{
+			TSaveGameSerializer<false> BinarySerializer(this);
+			SerializedData->Levels.FindOrAdd(LevelName).StreamingLevels.FindOrAdd(StreamingLevel.Key).Data =
+			    BinarySerializer.SerializeStreamingLevelData(StreamingLevel.Key);
+		}
 	}
 }
 
@@ -214,7 +224,7 @@ void USerializeSubsystem::OnWorldInitialized(UWorld* World, const UWorld::Initia
 }
 
 // This is called after the all actors of the level are initialized
-void USerializeSubsystem::OnActorsInitialized(const FActorsInitializedParams& Params)
+void USerializeSubsystem::OnActorsInitialized(const FActorsInitializedParams& Params) const
 {
 	if (!IsValid(Params.World) || GetWorld() != Params.World)
 	{
@@ -253,7 +263,7 @@ void USerializeSubsystem::OnActorsInitialized(const FActorsInitializedParams& Pa
 }
 
 // This is called when the world is cleaned up
-void USerializeSubsystem::OnWorldCleanup(UWorld* World, bool, bool)
+void USerializeSubsystem::OnWorldCleanup(UWorld* World, bool, bool) const
 {
 	if (!IsValid(World) || GetWorld() != World)
 	{
@@ -327,15 +337,20 @@ void USerializeSubsystem::OnLevelRemovedFromWorld(ULevel* Level, UWorld* World)
 
 	if (SerializedData.IsValid())
 	{
-		TSaveGameSerializer<false> BinarySerializer(this);
-
-		SerializedData->Levels.FindOrAdd(LevelName).StreamingLevels.FindOrAdd(StreamingLevel).Data =
-		    BinarySerializer.SerializeStreamingLevelData(StreamingLevel);
-
 #if !UE_BUILD_SHIPPING && WITH_TEXT_ARCHIVE_SUPPORT
-		TSaveGameSerializer<false, true> TextSerializer(this);
-		TextSerializer.SerializeStreamingLevelData(StreamingLevel);
+		if (SerializedData->bIsTextFormat)
+		{
+			TSaveGameSerializer<false, true> S(this);
+			SerializedData->Levels.FindOrAdd(LevelName).StreamingLevels.FindOrAdd(StreamingLevel).Data =
+			    S.SerializeStreamingLevelData(StreamingLevel);
+		}
+		else
 #endif
+		{
+			TSaveGameSerializer<false> BinarySerializer(this);
+			SerializedData->Levels.FindOrAdd(LevelName).StreamingLevels.FindOrAdd(StreamingLevel).Data =
+			    BinarySerializer.SerializeStreamingLevelData(StreamingLevel);
+		}
 	}
 
 	PersistentLevelRecord->StreamingLevels[StreamingLevel]->Actors->SaveGame.Reset();
@@ -343,7 +358,7 @@ void USerializeSubsystem::OnLevelRemovedFromWorld(ULevel* Level, UWorld* World)
 }
 
 // This is called just before an actor is spawned
-void USerializeSubsystem::OnActorPreSpawn(AActor* Actor)
+void USerializeSubsystem::OnActorPreSpawn(AActor* Actor) const
 {
 	if (!IsValid(Actor))
 		return;
@@ -373,7 +388,7 @@ void USerializeSubsystem::OnActorPreSpawn(AActor* Actor)
 }
 
 // This is called just before an actor is destroyed
-void USerializeSubsystem::OnActorDestroyed(AActor* Actor)
+void USerializeSubsystem::OnActorDestroyed(AActor* Actor) const
 {
 	if (PersistentLevelRecord->Actors->SaveGame.Remove(Actor))
 	{

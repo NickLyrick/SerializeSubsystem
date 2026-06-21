@@ -2,7 +2,6 @@
 
 #include "CoreMinimal.h"
 
-#include "GameFramework/Actor.h"
 #include "SaveGameMigrationStep.h"
 #include "Structs/SaveGameStruct.h"
 #include "Structs/SerializationStructs.h"
@@ -46,17 +45,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Serialize Subsystem | Load")
 	bool IsLoadingSaveGame() const;
 
-#if !UE_BUILD_SHIPPING && WITH_TEXT_ARCHIVE_SUPPORT
-	/**
-	 * Loads level state from raw JSON bytes. Intended for automated tests:
-	 * pair with the JSON files produced by Save() in non-shipping builds.
-	 *
-	 * @param JsonLevelData Raw UTF-8 JSON bytes (output of SerializeLevelData
-	 *                      with TSaveGameSerializer<false, true>).
-	 */
-	void LoadFromJson(TArray<uint8> JsonLevelData);
-#endif
-
 	/**
 	 * Fired when a load attempt finishes — successfully or otherwise.
 	 * Check the Result parameter to distinguish success from each failure mode.
@@ -71,16 +59,16 @@ private:
 protected:
 	// World Event Handlers
 	void OnWorldInitialized(UWorld* World, const UWorld::InitializationValues);
-	void OnActorsInitialized(const FActorsInitializedParams& Params);
-	void OnWorldCleanup(UWorld* World, bool, bool);
+	void OnActorsInitialized(const FActorsInitializedParams& Params) const;
+	void OnWorldCleanup(UWorld* World, bool, bool) const;
 
 	// Streaming Level Event Handlers
 	void OnLevelAddedToWorld(ULevel* Level, UWorld* World);
 	void OnLevelRemovedFromWorld(ULevel* Level, UWorld* World);
 
 	// Actor Event Handlers
-	void OnActorPreSpawn(AActor* Actor);
-	void OnActorDestroyed(AActor* Actor);
+	void OnActorPreSpawn(AActor* Actor) const;
+	void OnActorDestroyed(AActor* Actor) const;
 
 	// Deferred Event Handlers
 	void FinalizeLoad(ESaveGameLoadResult Result);
@@ -95,12 +83,12 @@ private:
 	// until OnActorsInitialized fires in the new map.
 	TSharedPtr<class FSaveGameSerializer, ESPMode::ThreadSafe> CurrentSerializer;
 
-	TSharedPtr<FLevelStruct>   PersistentLevelRecord;
+	TSharedPtr<FLevelStruct> PersistentLevelRecord;
 	TSharedPtr<FSerializedData> SerializedData = MakeShared<FSerializedData>();
 
 	// Parallel arrays (index N in both refers to the same migration step).
 	// Populated in SerializeVersions; applied per-actor in SerializeActorData after
 	// deserialization, because ImportText_Direct requires a fully constructed UObject.
 	TArray<FMigration_SetDefaultValue> PendingDefaultMigrations;
-	TArray<TObjectPtr<UClass>>         PendingDefaultMigrationClasses;
+	TArray<TObjectPtr<UClass>> PendingDefaultMigrationClasses;
 };

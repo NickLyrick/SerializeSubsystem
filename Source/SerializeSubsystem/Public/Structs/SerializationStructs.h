@@ -65,4 +65,6 @@ struct FSerializedData
 
 	UPROPERTY(SaveGame, EditAnywhere, BlueprintReadWrite, Category = "Serialization Data")
 	TMap<FString, FLevelData> Levels = {};
+
+	UPROPERTY(SaveGame) bool bIsTextFormat = false;
 };

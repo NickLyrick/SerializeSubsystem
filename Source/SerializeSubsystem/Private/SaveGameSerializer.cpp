@@ -3,9 +3,6 @@
 #include "Engine/Level.h"
 #include "Misc/Crc.h"
 #include "Misc/EngineVersion.h"
-#include "Misc/FileHelper.h"
-#include "Misc/PackageName.h"
-#include "Misc/Paths.h"
 #include "SaveGameFunctionLibrary.h"
 #include "SaveGameObject.h"
 #include "SaveGameSettings.h"
@@ -181,12 +178,6 @@ TArray<uint8> TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeHeaderDat
 		return CompressAndWrapBlob(Data);
 	}
 
-	if (bIsTextFormat)
-	{
-		const FString JsonPath = FPaths::ProjectSavedDir() / TEXT("SaveGames") / TEXT("Header.json");
-		FFileHelper::SaveArrayToFile(Data, *JsonPath);
-	}
-
 	return Data;
 }
 
@@ -278,13 +269,6 @@ TArray<uint8> TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeLevelData
 	if constexpr (!bIsTextFormat && !bIsLoading)
 	{
 		return CompressAndWrapBlob(Data);
-	}
-
-	if (bIsTextFormat)
-	{
-		const FString SaveName = FPackageName::GetShortName(Level->GetOutermost()->GetName()) + TEXT(".json");
-		const FString JsonPath = FPaths::ProjectSavedDir() / TEXT("SaveGames") / SaveName;
-		FFileHelper::SaveArrayToFile(Data, *JsonPath);
 	}
 
 	return Data;
@@ -379,13 +363,6 @@ TArray<uint8> TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeStreaming
 	if constexpr (!bIsTextFormat && !bIsLoading)
 	{
 		return CompressAndWrapBlob(Data);
-	}
-
-	if (bIsTextFormat)
-	{
-		const FString SaveName = FPackageName::GetShortName(StreamingLevel->GetWorldAssetPackageName()) + TEXT(".json");
-		const FString JsonPath = FPaths::ProjectSavedDir() / TEXT("SaveGames") / SaveName;
-		FFileHelper::SaveArrayToFile(Data, *JsonPath);
 	}
 
 	return Data;
@@ -593,100 +570,100 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActors(ULevel* Lev
 		{
 			AActor*& Actor = Actors[ActorIdx];
 
-			SerializeActor(ActorsMap,
-			               Actor,
-			               [&](const FString& ActorName,
-			                   const FSoftClassPath& Class,
-			                   const FGuid& SpawnID,
-			                   FStructuredArchive::FSlot& ActorSlot)
-			               {
-				               ensureAlways(!ActorName.IsEmpty());
+			SerializeActor(
+			    ActorsMap,
+			    Actor,
+			    [&](const FString& ActorName,
+			        const FSoftClassPath& Class,
+			        const FGuid& SpawnID,
+			        FStructuredArchive::FSlot& ActorSlot)
+			    {
+				    ensureAlways(!ActorName.IsEmpty());
 
-				               if (Class.IsNull())
-				               {
-					               Actor = FindObjectFast<AActor>(Level, *ActorName);
-				               }
-				               else if (SpawnID.IsValid() && SpawnIDs.Contains(SpawnID))
-				               {
-					               Actor = SpawnIDs[SpawnID];
-				               }
-				               else
-				               {
-					               UClass* ActorClass = Class.TryLoadClass<AActor>();
+				    if (Class.IsNull())
+				    {
+					    Actor = FindObjectFast<AActor>(Level, *ActorName);
+				    }
+				    else if (SpawnID.IsValid() && SpawnIDs.Contains(SpawnID))
+				    {
+					    Actor = SpawnIDs[SpawnID];
+				    }
+				    else
+				    {
+					    UClass* ActorClass = Class.TryLoadClass<AActor>();
 
-					               if (!ActorClass)
-					               {
-						               UE_LOG(LogSaveGame,
-						                      Error,
-						                      TEXT("Failed to load class '%s' for actor '%s' — "
-						                           "actor will be skipped."),
-						                      *Class.ToString(),
-						                      *ActorName);
-						               return;
-					               }
+					    if (!ActorClass)
+					    {
+						    UE_LOG(LogSaveGame,
+						           Error,
+						           TEXT("Failed to load class '%s' for actor '%s' — "
+						                "actor will be skipped."),
+						           *Class.ToString(),
+						           *ActorName);
+						    return;
+					    }
 
-					               // Some actors (e.g. GameMode-spawned pawns) are dynamically created
-					               // before the serializer runs OnMapLoad, so they already exist in the
-					               // level under the same name. Try to reclaim the existing instance
-					               // before attempting a new spawn to avoid the "Cannot generate unique
-					               // name" fatal when bNoFail is true.
-					               Actor = FindObjectFast<AActor>(Level, *ActorName);
+					    // Some actors (e.g. GameMode-spawned pawns) are dynamically created
+					    // before the serializer runs OnMapLoad, so they already exist in the
+					    // level under the same name. Try to reclaim the existing instance
+					    // before attempting a new spawn to avoid the "Cannot generate unique
+					    // name" fatal when bNoFail is true.
+					    Actor = FindObjectFast<AActor>(Level, *ActorName);
 
-					               if (!IsValid(Actor))
-					               {
-						               FActorSpawnParameters SpawnParameters;
-						               SpawnParameters.OverrideLevel = Level;
-						               SpawnParameters.Name = *ActorName;
-						               SpawnParameters.bNoFail = false;
+					    if (!IsValid(Actor))
+					    {
+						    FActorSpawnParameters SpawnParameters;
+						    SpawnParameters.OverrideLevel = Level;
+						    SpawnParameters.Name = *ActorName;
+						    SpawnParameters.bNoFail = false;
 
-						               Actor = Level->GetWorld()->SpawnActor(ActorClass, nullptr, nullptr, SpawnParameters);
+						    Actor = Level->GetWorld()->SpawnActor(ActorClass, nullptr, nullptr, SpawnParameters);
 
-						               if (!IsValid(Actor))
-						               {
-							               UE_LOG(LogSaveGame,
-							                      Error,
-							                      TEXT("Failed to spawn actor '%s' of class '%s' — "
-							                           "actor will be skipped."),
-							                      *ActorName,
-							                      *Class.ToString());
-							               return;
-						               }
-					               }
+						    if (!IsValid(Actor))
+						    {
+							    UE_LOG(LogSaveGame,
+							           Error,
+							           TEXT("Failed to spawn actor '%s' of class '%s' — "
+							                "actor will be skipped."),
+							           *ActorName,
+							           *Class.ToString());
+							    return;
+						    }
+					    }
 
-					               if (IsValid(Actor) && SpawnID.IsValid() && Actor->Implements<USaveGameSpawnActor>())
-					               {
-						               ISaveGameSpawnActor::Execute_SetSpawnID(Actor, SpawnID);
-					               }
-				               }
+					    if (IsValid(Actor) && SpawnID.IsValid() && Actor->Implements<USaveGameSpawnActor>())
+					    {
+						    ISaveGameSpawnActor::Execute_SetSpawnID(Actor, SpawnID);
+					    }
+				    }
 
-				               if (IsValid(Actor) && SpawnID.IsValid())
-				               {
-					               const FTopLevelAssetPath LevelAssetPath(Level->GetPackage()->GetFName(),
-					                                                       Level->GetOuter()->GetFName());
-					               const FString ActorSubPath = LEVEL_SUBPATH_PREFIX + ActorName;
-					               ProxyArchive.AddRedirect(FSoftObjectPath(LevelAssetPath, ActorSubPath),
-					                                        FSoftObjectPath(Actor));
-				               }
+				    if (IsValid(Actor) && SpawnID.IsValid())
+				    {
+					    const FTopLevelAssetPath LevelAssetPath(Level->GetPackage()->GetFName(),
+					                                            Level->GetOuter()->GetFName());
+					    const FString ActorSubPath = LEVEL_SUBPATH_PREFIX + ActorName;
+					    ProxyArchive.AddRedirect(FSoftObjectPath(LevelAssetPath, ActorSubPath), FSoftObjectPath(Actor));
+				    }
 
-				               // JSON loading uses a single-pass approach: FStructuredArchive
-				               // with JSON is forward-only and cannot seek back for a second pass,
-				               // so we serialize properties immediately after spawning/finding
-				               // the actor, while ActorSlot is still open.
-				               if constexpr (bIsTextFormat)
-				               {
-					               if (!IsValid(Actor))
-					               {
-						               UE_LOG(LogSaveGame,
-						                      Warning,
-						                      TEXT("Actor '%s' is invalid after spawn/find — "
-						                           "skipping property deserialization."),
-						                      *ActorName);
-						               return;
-					               }
+				    // JSON loading uses a single-pass approach: FStructuredArchive
+				    // with JSON is forward-only and cannot seek back for a second pass,
+				    // so we serialize properties immediately after spawning/finding
+				    // the actor, while ActorSlot is still open.
+				    if constexpr (bIsTextFormat)
+				    {
+					    if (!IsValid(Actor))
+					    {
+						    UE_LOG(LogSaveGame,
+						           Warning,
+						           TEXT("Actor '%s' is invalid after spawn/find — "
+						                "skipping property deserialization."),
+						           *ActorName);
+						    return;
+					    }
 
-					               SerializeActorData(Actor, ActorSlot);
-				               }
-			               });
+					    SerializeActorData(Actor, ActorSlot);
+				    }
+			    });
 		}
 
 		// JSON loading is fully handled above in the single-pass lambda.
@@ -1014,9 +991,12 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActor(
 		ClassSlot.GetValue() << Class;
 	}
 
-	// If we have a GUID, we're a spawn actor that needs to be mapped by GUID
-	TOptional<FStructuredArchive::FSlot> GuidSlot = ActorSlot.TryEnterAttribute(TEXT("GUID"), SpawnID.IsValid());
-	if (GuidSlot.IsSet())
+	// If we have a GUID, we're a spawn actor that needs to be mapped by GUID.
+	// GuidSlot must be scoped so it destructs (and calls LeaveAttribute) before
+	// BodyFunction enters the "Properties" attribute on the same ActorSlot.
+	// Leaving the GUID scope open while entering Properties confuses the JSON
+	// formatter's context stack and triggers a SharedPointer IsValid() assertion.
+	if (TOptional<FStructuredArchive::FSlot> GuidSlot = ActorSlot.TryEnterAttribute(TEXT("GUID"), SpawnID.IsValid()))
 	{
 		GuidSlot.GetValue() << SpawnID;
 	}

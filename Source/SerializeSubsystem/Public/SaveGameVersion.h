@@ -1,6 +1,5 @@
 #pragma once
 
-#include "CoreTypes.h"
 #include "Misc/Guid.h"
 
 class SERIALIZESUBSYSTEM_API FSaveGameVersion
@@ -9,7 +8,7 @@ public:
 	enum Type
 	{
 		MinCompatibleVersion = 0,
-		WithManifestAndCRC,       // v1: blobs prefixed with FSaveGameManifest (magic + version + CRC32)
+		WithManifestAndCRC, // v1: blobs prefixed with FSaveGameManifest (magic + version + CRC32)
 		// ── add new versions above this line ──────────────────────────────────────────────
 		VersionPlusOne,
 		// VersionPlusOne is a sentinel: LatestVersion stays correct when new entries are added above it.
