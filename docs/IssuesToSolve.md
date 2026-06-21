@@ -1,0 +1,4 @@
+- Fields.Add(FieldName, 0) sentinel vs TSet — коллизия теоретическая (IsTextFormat фиксирован на lifetime архива)                          
+- LoadStreamingLevels/OnLevelAddedToWorld binary-only — отложено по дизайну, вне scope диффа                                               
+- Два TSaveGameSerializer на Save() — намеренно (FJsonArchiveInputFormatter парсит JSON жадно в конструкторе, отдельные буферы             обязательны)                                                                                                                               
+- O(N×M) в OnActorsInitialized — предшествующий код, вне диффа

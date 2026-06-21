@@ -1,151 +1,183 @@
 #pragma once
 
 #include "CoreMinimal.h"
+
 #include "UObject/Interface.h"
 
 #include "SaveGameObject.generated.h"
 
 /**
- * The blueprint representation of the structured record we're writing to.
+ * Blueprint-accessible wrapper around FStructuredArchive::FRecord for use inside OnSerialize().
  *
- * When serializing a binary archive, FSaveGameArchive on construction will
- * store its initial position that it started serializing from. Once
- * FSaveGameArchive loses scope and calls its destructor, it will then serialize
- * all of the field names and their offsets, if loading, it will automatically
- * seek to the very end of the archive. The initial position and stored offsets
- * can be used for out-of-order seeking to each of the archive's serialized
- * fields.
+ * Binary mode: on construction, records the archive position (StartPosition). In the destructor,
+ * seeks back and writes field-name → offset pairs so that fields can be located by name on load,
+ * even when the serialized field set has changed between save versions (unknown fields are skipped
+ * by seeking past them rather than failing).
  *
- * Additionally, when loading, these field names are checked against
- * CoreRedirects and redirected if needed.
+ * Loading: checks serialized field names against CoreRedirects and redirects if needed, then
+ * seeks to each field's stored offset before calling the deserialization function.
  */
 USTRUCT(BlueprintType, BlueprintInternalUseOnly)
-struct SERIALIZESUBSYSTEM_API FSaveGameArchive {
-  GENERATED_BODY()
+struct SERIALIZESUBSYSTEM_API FSaveGameArchive
+{
+	GENERATED_BODY()
 
 public:
-  FSaveGameArchive()
-      : Record(nullptr), Object(nullptr), StartPosition(0), EndPosition(0) {}
+	FSaveGameArchive()
+	    : Record(nullptr),
+	      Object(nullptr),
+	      StartPosition(0),
+	      EndPosition(0)
+	{
+	}
 
-  FSaveGameArchive(class FStructuredArchive::FRecord &InRecord,
-                   UObject *InObject);
-  ~FSaveGameArchive();
+	FSaveGameArchive(class FStructuredArchive::FRecord& InRecord, UObject* InObject);
+	~FSaveGameArchive();
 
-  bool IsValid() const { return Record != nullptr; }
+	bool IsValid() const
+	{
+		return Record != nullptr;
+	}
 
-  class FStructuredArchive::FRecord &GetRecord() const { return *Record; }
+	class FStructuredArchive::FRecord& GetRecord() const
+	{
+		return *Record;
+	}
 
-  /**
-   * Serializes a field with a custom lambda function. If a binary format,
-   * stores its offset for out-of-order reading.
-   * @param FieldName Name of the field that's being serialized
-   * @param SerializeFunction Lambda function to do the actual serialization,
-   * provides a structured slot
-   * @return true if the field was serialized
-   */
-  template <typename FSerializeFunc>
-  bool SerializeField(FName FieldName, FSerializeFunc SerializeFunction) {
-    if (!IsValid()) {
-      return false;
-    }
+	/**
+	 * Serializes a named field using the provided lambda.
+	 * Binary mode: stores the field's byte offset so loading can seek to it by name — supports
+	 * schema changes where fields appear in a different order or are missing entirely.
+	 * Returns false if the field is unknown (loading) or already serialized (saving).
+	 */
+	template <typename FSerializeFunc>
+	bool SerializeField(FName FieldName, FSerializeFunc SerializeFunction)
+	{
+		if (!IsValid())
+		{
+			return false;
+		}
 
-    FArchive &Archive = Record->GetUnderlyingArchive();
+		FArchive& Archive = Record->GetUnderlyingArchive();
 
-    if (Archive.IsSaving() && Fields.Contains(FieldName)) {
-      // We don't want to double up on saving the same property
-      return false;
-    }
+		if (Archive.IsSaving() && Fields.Contains(FieldName))
+		{
+			return false;
+		}
 
-    // Text formats don't deal with seeking very well
-    if (!Archive.IsTextFormat()) {
-      if (Archive.IsLoading()) {
-        if (!Fields.Contains(FieldName)) {
-          return false;
-        }
+		if (Archive.IsTextFormat())
+		{
+			if (Archive.IsLoading())
+			{
+				// FJsonArchiveInputFormatter::EnterField does check(Field.IsValid()) and
+				// crashes when the field is absent. TryEnterField returns an empty optional
+				// instead, matching the binary path's graceful missing-field handling.
+				TOptional<FStructuredArchive::FSlot> Slot = Record->TryEnterField(*FieldName.ToString(), false);
+				if (!Slot.IsSet())
+				{
+					return false;
+				}
+				SerializeFunction(Slot.GetValue());
+				return true;
+			}
+			// JSON saving: track field names so the IsSaving dedup check above fires
+			// on duplicate calls, mirroring binary mode behaviour.
+			Fields.Add(FieldName, 0);
+		}
+		else
+		{
+			if (Archive.IsLoading())
+			{
+				if (!Fields.Contains(FieldName))
+				{
+					return false;
+				}
 
-        Archive.Seek(StartPosition + Fields[FieldName]);
-      } else {
-        // Use an offset, in case we need to shuffle data around later!
-        Fields.Add(FieldName, Archive.Tell() - StartPosition);
-      }
-    }
+				Archive.Seek(StartPosition + Fields[FieldName]);
+			}
+			else
+			{
+				// Store offset relative to StartPosition so the table is valid even if
+				// the archive is later moved or copied.
+				Fields.Add(FieldName, Archive.Tell() - StartPosition);
+			}
+		}
 
-    SerializeFunction(Record->EnterField(*FieldName.ToString()));
+		SerializeFunction(Record->EnterField(*FieldName.ToString()));
 
-    return true;
-  }
+		return true;
+	}
 
 private:
-  FSaveGameArchive(FSaveGameArchive &) = delete;
+	FSaveGameArchive(FSaveGameArchive&) = delete;
 
-  class FStructuredArchive::FRecord *Record;
-  TWeakObjectPtr<> Object;
-  uint64 StartPosition;
-  uint64 EndPosition;
+	class FStructuredArchive::FRecord* Record;
+	TWeakObjectPtr<> Object;
+	uint64 StartPosition;
+	uint64 EndPosition;
 
-  /** This serialized fields and their offsets from the start of this archive */
-  TMap<FName, uint64> Fields;
+	TMap<FName, uint64> Fields;
 };
 
-// Ensure that our archive can't be copied
 template <>
-struct TStructOpsTypeTraits<FSaveGameArchive>
-    : public TStructOpsTypeTraitsBase2<FSaveGameArchive> {
-  enum { WithCopy = false };
+struct TStructOpsTypeTraits<FSaveGameArchive> : public TStructOpsTypeTraitsBase2<FSaveGameArchive>
+{
+	enum
+	{
+		WithCopy = false
+	};
 };
 
 UINTERFACE(MinimalAPI)
-class USaveGameObject : public UInterface {
-  GENERATED_BODY()
+class USaveGameObject : public UInterface
+{
+	GENERATED_BODY()
 };
 
-/**
- * If an object implements this interface, it should be saved.
- */
-class SERIALIZESUBSYSTEM_API ISaveGameObject {
-  GENERATED_BODY()
+class SERIALIZESUBSYSTEM_API ISaveGameObject
+{
+	GENERATED_BODY()
 
 public:
-  /**
-   * Called after an object's SaveGame properties are serialized. Useful for
-   * serializing fields that can't be marked with the SaveGame specifier (i.e.
-   * engine properties like transforms, velocity, etc). This method can also be
-   * implemented as a "PostSerialize" event for this object.
-   *
-   * @param Archive The archive that fields will be serialized to/from
-   * @param bIsLoading true if loading a save game, false if saving
-   * @return Not used, but necessary to not turn this method into an event
-   * (useful for SerializeItem and local vars)
-   */
-  UFUNCTION(BlueprintNativeEvent, Category = SaveGame)
-  bool OnSerialize(UPARAM(ref) FSaveGameArchive &Archive, bool bIsLoading);
+	/**
+	 * Called after UPROPERTY(SaveGame) properties are serialized. Use this for fields that
+	 * cannot carry SaveGame (engine properties like transform, velocity, etc.) or to run
+	 * post-load fixup logic.
+	 *
+	 * Return value is required by the BlueprintNativeEvent contract (enables local variables
+	 * and SerializeItem usage in Blueprint) but is not checked by the serializer.
+	 *
+	 * Return false to exclude this actor from serialization entirely (useful for transient
+	 * actors that should not exist in a loaded save, e.g., tutorial markers).
+	 */
+	UFUNCTION(BlueprintNativeEvent, Category = SaveGame)
+	bool OnSerialize(UPARAM(ref) FSaveGameArchive& Archive, bool bIsLoading);
 };
 
 UINTERFACE(MinimalAPI)
-class USaveGameSpawnActor : public UInterface {
-  GENERATED_BODY()
+class USaveGameSpawnActor : public UInterface
+{
+	GENERATED_BODY()
 };
 
 /**
- * Used on an actor to provide the save game system a unique SpawnID for
- * serializing actor data to spawned actors that aren't (or can't be) spawned by
- * the save game system.
+ * Implement on actors that are spawned by gameplay code before the save system runs
+ * (e.g., the player character spawned by GameMode). The save system uses SpawnID to match
+ * saved data to an already-spawned actor instead of trying to spawn a duplicate.
  *
- * For example, a player's character is spawned by the game mode before the save
- * game system has a chance to spawn it. So the save game system then gets the
- * already spawned character's SpawnID, matches it with the data's SpawnID, and
- * then serializes that data to the character.
+ * SpawnID must be stable across sessions — generate once (e.g., from a GUID in a Data Asset)
+ * and never change it.
  */
-class SERIALIZESUBSYSTEM_API ISaveGameSpawnActor {
-  GENERATED_BODY()
+class SERIALIZESUBSYSTEM_API ISaveGameSpawnActor
+{
+	GENERATED_BODY()
 
 public:
-  /** Returns a unique Spawn ID for this Actor */
-  UFUNCTION(BlueprintCallable, BlueprintNativeEvent,
-            Category = "SaveGame|Spawn")
-  const FGuid GetSpawnID() const;
+	/** Returns a stable, session-persistent unique ID for this actor. */
+	UFUNCTION(BlueprintCallable, BlueprintNativeEvent, Category = "SaveGame|Spawn")
+	const FGuid GetSpawnID() const;
 
-  /** Assigns a new SpawnID to this actor */
-  UFUNCTION(BlueprintNativeEvent, Category = "SaveGame|Spawn")
-  bool SetSpawnID(const FGuid &NewID);
+	/** Assigns a SpawnID to this actor (called by the save system after spawning). */
+	UFUNCTION(BlueprintNativeEvent, Category = "SaveGame|Spawn")
+	bool SetSpawnID(const FGuid& NewID);
 };
