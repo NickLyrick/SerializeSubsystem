@@ -41,6 +41,10 @@ void USerializeSubsystem::Save(FSerializedData& Data)
 	const bool bTextFormat = Data.bIsTextFormat;
 	const TSoftObjectPtr<ULevel> Level = GetWorld()->GetCurrentLevel();
 
+	SerializedData->LevelName = Level->GetOutermost()->GetLoadedPath().GetPackageName();
+	SerializedData->Levels.FindOrAdd(SerializedData->LevelName);
+	SerializedData->bIsTextFormat = bTextFormat;
+
 #if !UE_BUILD_SHIPPING && WITH_TEXT_ARCHIVE_SUPPORT
 	if (bTextFormat)
 	{
@@ -48,16 +52,10 @@ void USerializeSubsystem::Save(FSerializedData& Data)
 			TSaveGameSerializer<false, true> S(this);
 			SerializedData->Header = S.SerializeHeaderData();
 		}
-
-		SerializedData->LevelName = Level->GetOutermost()->GetLoadedPath().GetPackageName();
-		SerializedData->Levels.FindOrAdd(SerializedData->LevelName);
-
 		{
 			TSaveGameSerializer<false, true> S(this);
 			SerializedData->Levels[SerializedData->LevelName].Data = S.SerializeLevelData(Level);
 		}
-
-		SerializedData->bIsTextFormat = true;
 	}
 	else
 #endif
@@ -66,16 +64,10 @@ void USerializeSubsystem::Save(FSerializedData& Data)
 			TSaveGameSerializer<false> BinarySerializer(this);
 			SerializedData->Header = BinarySerializer.SerializeHeaderData();
 		}
-
-		SerializedData->LevelName = Level->GetOutermost()->GetLoadedPath().GetPackageName();
-		SerializedData->Levels.FindOrAdd(SerializedData->LevelName);
-
 		{
 			TSaveGameSerializer<false> BinarySerializer(this);
 			SerializedData->Levels[SerializedData->LevelName].Data = BinarySerializer.SerializeLevelData(Level);
 		}
-
-		SerializedData->bIsTextFormat = false;
 	}
 
 	// Serialize Streaming Levels Data

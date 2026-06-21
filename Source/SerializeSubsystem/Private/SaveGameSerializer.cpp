@@ -1004,7 +1004,7 @@ void TSaveGameSerializer<bIsLoading, bIsTextFormat>::SerializeActor(
 	// DataSize enables corruption resilience: if an actor's data is malformed during loading,
 	// Seek(BeginDataPosition + DataSize) skips it cleanly and continues with the next actor.
 	// Not stored in JSON mode — FJsonArchiveOutputFormatter does not support seek.
-	uint64 DataSize;
+	uint64 DataSize = 0;
 
 	if (!bIsTextFormat)
 	{

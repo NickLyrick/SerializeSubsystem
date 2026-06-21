@@ -65,7 +65,26 @@ public:
 			return false;
 		}
 
-		if (!Archive.IsTextFormat())
+		if (Archive.IsTextFormat())
+		{
+			if (Archive.IsLoading())
+			{
+				// FJsonArchiveInputFormatter::EnterField does check(Field.IsValid()) and
+				// crashes when the field is absent. TryEnterField returns an empty optional
+				// instead, matching the binary path's graceful missing-field handling.
+				TOptional<FStructuredArchive::FSlot> Slot = Record->TryEnterField(*FieldName.ToString(), false);
+				if (!Slot.IsSet())
+				{
+					return false;
+				}
+				SerializeFunction(Slot.GetValue());
+				return true;
+			}
+			// JSON saving: track field names so the IsSaving dedup check above fires
+			// on duplicate calls, mirroring binary mode behaviour.
+			Fields.Add(FieldName, 0);
+		}
+		else
 		{
 			if (Archive.IsLoading())
 			{
@@ -82,25 +101,6 @@ public:
 				// the archive is later moved or copied.
 				Fields.Add(FieldName, Archive.Tell() - StartPosition);
 			}
-		}
-		else if (Archive.IsLoading())
-		{
-			// FJsonArchiveInputFormatter::EnterField does check(Field.IsValid()) and
-			// crashes when the field is absent. TryEnterField returns an empty optional
-			// instead, matching the binary path's graceful missing-field handling.
-			TOptional<FStructuredArchive::FSlot> Slot = Record->TryEnterField(*FieldName.ToString(), false);
-			if (!Slot.IsSet())
-			{
-				return false;
-			}
-			SerializeFunction(Slot.GetValue());
-			return true;
-		}
-		else
-		{
-			// JSON saving: track field names so the IsSaving dedup check above fires
-			// on duplicate calls, mirroring binary mode behaviour.
-			Fields.Add(FieldName, 0);
 		}
 
 		SerializeFunction(Record->EnterField(*FieldName.ToString()));
