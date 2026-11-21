@@ -244,11 +244,16 @@ void USerializeSubsystem::OnActorsInitialized(const FActorsInitializedParams& Pa
 
 		for (TSoftObjectPtr<ULevelStreaming> StreamingLevel : Params.World->GetStreamingLevels())
 		{
-			const bool bStreamingLevel =
-			    StreamingLevel->GetWorldAssetPackageName() == Level->GetOutermost()->GetFName();
-			if (StreamingLevel.IsValid() && bStreamingLevel)
+			if (!StreamingLevel.IsValid() ||
+			    StreamingLevel->GetWorldAssetPackageName() != Level->GetOutermost()->GetFName())
 			{
-				PersistentLevelRecord->StreamingLevels[StreamingLevel]->Actors->SaveGame.Add(Actor);
+				continue;
+			}
+			// The record knows the streaming levels the world had when it was initialized. World Partition adds its
+			// own later (runtime cells, embedded level instances): those are not tracked, as in OnLevelAddedToWorld.
+			if (const TSharedPtr<FStreamingLevelStruct>* Record = PersistentLevelRecord->StreamingLevels.Find(StreamingLevel))
+			{
+				(*Record)->Actors->SaveGame.Add(Actor);
 			}
 		}
 	}
