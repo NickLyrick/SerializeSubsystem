@@ -1,7 +1,33 @@
+// All Rights Reserved by TacoEaters
+
 #include "SaveGameFunctionLibrary.h"
 
+#include "Engine/World.h"
 #include "SaveGameSettings.h"
 #include "Serialization/CustomVersion.h"
+
+AActor* USaveGameFunctionLibrary::BeginSpawnSaveableActor(UWorld* World,
+                                                          UClass* Class,
+                                                          const FTransform& Transform,
+                                                          AActor* Owner)
+{
+	if (World == nullptr || Class == nullptr || !Class->ImplementsInterface(USaveGameSpawnActor::StaticClass()))
+	{
+		return nullptr;
+	}
+
+	FActorSpawnParameters Parameters;
+	Parameters.Owner                          = Owner;
+	Parameters.OverrideLevel                  = World->PersistentLevel;
+	Parameters.bDeferConstruction             = true;
+	Parameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	AActor* Actor = World->SpawnActor(Class, &Transform, Parameters);
+	if (Actor != nullptr)
+	{
+		ISaveGameSpawnActor::Execute_SetSpawnID(Actor, FGuid::NewGuid());
+	}
+	return Actor;
+}
 
 #if WITH_EDITOR
 #include "Blueprint/BlueprintExceptionInfo.h"
@@ -185,7 +211,11 @@ int32 USaveGameFunctionLibrary::UseCustomVersion(FSaveGameArchive& Archive, cons
 			{
 				// If the archive has one, return its saved version
 				const FCustomVersion* CustomVersion = UnderlyingArchive.GetCustomVersions().GetVersion(VersionId);
-				return CustomVersion ? CustomVersion->Version : INDEX_NONE;
+				if (CustomVersion == nullptr)
+				{
+					return INDEX_NONE;
+				}
+				return CustomVersion->Version;
 			}
 
 			// Get the latest version and save it

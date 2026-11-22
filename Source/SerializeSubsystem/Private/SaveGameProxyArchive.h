@@ -1,3 +1,5 @@
+// All Rights Reserved by TacoEaters
+
 #pragma once
 
 #include "Serialization/NameAsStringProxyArchive.h"
@@ -6,14 +8,12 @@
 #include "UObject/WeakObjectPtr.h"
 
 /**
- * Proxy archive that stores all object references as FSoftObjectPath strings rather than
- * raw pointers, making them stable across sessions. Also supports per-load path redirects
- * (used to remap references from old actor names to freshly spawned actor instances).
+ * Proxy archive of one save record (ADR-0060 §2): only SaveGame properties, every one written in full, names as
+ * strings and object references as soft paths.
  *
- * Redirect resolution here is separate from UE's built-in FixupCoreRedirects:
- * FixupCoreRedirects handles class/asset renames registered in DefaultEngine.ini, while
- * AddRedirect handles runtime remapping (e.g., a spawned actor's old path → new path)
- * without requiring an engine restart or config change.
+ * Full, not a delta against the archetype: a placed actor whose level overrides a default (a door authored open)
+ * and that the player changed back to the class default would otherwise write nothing for that field, and the
+ * load would leave the level's value in place.
  */
 template <bool bIsLoading>
 struct TSaveGameProxyArchive final : FNameAsStringProxyArchive
@@ -21,52 +21,33 @@ struct TSaveGameProxyArchive final : FNameAsStringProxyArchive
 	explicit TSaveGameProxyArchive(FArchive& InInnerArchive)
 	    : FNameAsStringProxyArchive(InInnerArchive)
 	{
-		// Tells Serialize() methods to only process UPROPERTY(SaveGame) fields.
 		ArIsSaveGame = true;
-	}
-
-	void AddRedirect(const FSoftObjectPath& From, const FSoftObjectPath& To)
-	{
-		if (From != To)
-		{
-			Redirects.Add(From, To);
-		}
+		ArNoDelta    = true;
 	}
 
 	virtual FArchive& operator<<(FSoftObjectPath& Value) override
 	{
 		Value.SerializePath(*this);
-
 		if (bIsLoading && !Value.IsNull())
 		{
-			// Apply engine-level redirects (class renames, package moves from DefaultEngine.ini).
+			// Class and asset renames registered in config.
 			Value.FixupCoreRedirects();
 		}
-
-		if (bIsLoading && Redirects.Contains(Value))
-		{
-			Value = Redirects[Value];
-		}
-
 		return *this;
 	}
 
 	virtual FArchive& operator<<(FSoftObjectPtr& Value) override
 	{
 		FSoftObjectPath Path;
-
 		if (!bIsLoading)
 		{
 			Path = Value.ToSoftObjectPath();
 		}
-
 		*this << Path;
-
 		if (bIsLoading)
 		{
 			Value = FSoftObjectPtr(Path);
 		}
-
 		return *this;
 	}
 
@@ -74,18 +55,18 @@ struct TSaveGameProxyArchive final : FNameAsStringProxyArchive
 	{
 		return SerializeObject(Value);
 	}
+
 	virtual FArchive& operator<<(FWeakObjectPtr& Value) override
 	{
 		return SerializeObject(Value);
 	}
+
 	virtual FArchive& operator<<(FObjectPtr& Value) override
 	{
 		return SerializeObject(Value);
 	}
 
 private:
-	TMap<FSoftObjectPath, FSoftObjectPath> Redirects;
-
 	template <typename ObjectType>
 	static FSoftObjectPath ToSoftObjectPath(const ObjectType& Value)
 	{
@@ -101,27 +82,23 @@ private:
 	FArchive& SerializeObject(ObjectType& Value)
 	{
 		FSoftObjectPath Path;
-
 		if (!bIsLoading)
 		{
 			Path = ToSoftObjectPath(Value);
 		}
-
 		*this << Path;
 
 		if (bIsLoading)
 		{
-			// ResolveObject first (no disk I/O): supports World Partition where tiles may not be loaded.
-			// TryLoad as fallback only if the object is not already in memory.
 			UObject* Object = Path.ResolveObject();
-			Value = Object;
-
-			if (!IsValid(Object) && !Path.IsNull())
+			// Only assets load from disk. A path into a package (an actor in a level or a cell) resolves to what is
+			// in memory or to nothing: loading it would pull a level package in outside the game world.
+			if (Object == nullptr && !Path.IsNull() && Path.GetSubPathString().IsEmpty())
 			{
-				Value = Path.TryLoad();
+				Object = Path.TryLoad();
 			}
+			Value = Object;
 		}
-
 		return *this;
 	}
 };

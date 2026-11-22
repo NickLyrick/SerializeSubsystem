@@ -18,6 +18,9 @@ public class SerializeSubsystem : ModuleRules
 			"DeveloperSettings",
 		});
 
+		// Tombstoned replicated actors store their destruction with the Iris bridge (SerializeSubsystem.cpp).
+		SetupIrisSupport(Target);
+
 		if (Target.Type == TargetType.Editor)
 		{
 			PrivateDependencyModuleNames.AddRange(new string[]

@@ -1,4 +1,6 @@
-﻿#pragma once
+// All Rights Reserved by TacoEaters
+
+#pragma once
 
 #include "CoreMinimal.h"
 
@@ -31,12 +33,15 @@ public:
 };
 
 UCLASS(config = Game, defaultconfig, meta = (DisplayName = "Save Game"))
-class SERIALIZESUBSYSTEM_API USaveGameSettings : public UDeveloperSettings
+class SERIALIZESUBSYSTEM_API USaveGameSettings final : public UDeveloperSettings
 {
 	GENERATED_BODY()
 
 public:
+	// Save-file version id of VersionEnum (Versions); invalid when the enum is not listed.
 	FGuid GetVersionId(const UEnum* VersionEnum) const;
+
+	// Whether a save from an incompatible engine version may load (bAllowLoadingFromIncompatibleEngineVersion).
 	bool IsLoadingFromIncompatibleEngineVersionAllowed() const
 	{
 		return bAllowLoadingFromIncompatibleEngineVersion;
@@ -47,6 +52,13 @@ public:
 #endif
 
 public:
+	/**
+	 * Identifies this game in every save file it writes; a file with another id is neither listed nor loaded
+	 * (ADR-0060 §5). Set once per game and never changed: a sequel gets its own.
+	 */
+	UPROPERTY(EditAnywhere, Config, Category = "Save Game")
+	FGuid GameId;
+
 	/**
 	 * When false (default), loading a save that was created on a different engine
 	 * version is rejected with ESaveGameLoadResult::EngineVersionMismatch.
