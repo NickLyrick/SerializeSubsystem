@@ -1,94 +1,143 @@
+// All Rights Reserved by TacoEaters
+
 #pragma once
 
 #include "CoreMinimal.h"
 
-#include "SaveGameMigrationStep.h"
-#include "Structs/SaveGameStruct.h"
-#include "Structs/SerializationStructs.h"
+#include "Engine/World.h"
+#include "SaveGameTypes.h"
 #include "Subsystems/GameInstanceSubsystem.h"
 
 #include "SerializeSubsystem.generated.h"
 
-/** Result passed to the OnLoadCompleted delegate after every load attempt. */
-UENUM(BlueprintType)
-enum class ESaveGameLoadResult : uint8
-{
-	Success UMETA(DisplayName = "Success"),
-	CorruptedData UMETA(DisplayName = "Corrupted Data"),
-	IncompatibleVersion UMETA(DisplayName = "Incompatible Version"),
-	EngineVersionMismatch UMETA(DisplayName = "Engine Version Mismatch"),
-	MapMissing UMETA(DisplayName = "Map Missing"),
-};
+class AGameModeBase;
+class APlayerController;
+class ULevel;
+class ULevelStreaming;
+struct FSaveGameRecord;
+struct FSaveGameStore;
+struct FSaveGameTable;
+struct FSaveGameTrackedActor;
+struct FSaveGameWorldState;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnSaveGameLoadCompleted, ESaveGameLoadResult, Result);
 
 /**
- * The subsystem that serializes and deserializes the game world.
+ * Saves the state of every ISaveGameObject actor of the server's game world as records keyed by the actor's save
+ * key (ADR-0060): one mechanism for World Partition, embedded Level Instances and plain level streaming. A record
+ * is applied before the actor's BeginPlay when its level appears and captured before EndPlay when the level goes;
+ * only actors that differ from how the level authored them are recorded. Clients do nothing: they get the state
+ * by replication.
  */
 UCLASS(DisplayName = "Serialize Subsystem", Category = "Serialize Subsystem Plugin")
-class SERIALIZESUBSYSTEM_API USerializeSubsystem : public UGameInstanceSubsystem
+class SERIALIZESUBSYSTEM_API USerializeSubsystem final : public UGameInstanceSubsystem
 {
 	GENERATED_BODY()
 
 public:
-	/* Subsystem API */
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
-	/* End Subsystem API */
 
-	UFUNCTION(BlueprintCallable, Category = "Serialize Subsystem | Save")
-	void Save(UPARAM(DisplayName = "Serialized Data") FSerializedData& Data);
+	// Captures the current world into a complete save file whose header carries UserMeta. Empty when this
+	// instance cannot save now: it is not the server of a game world, or a load is in flight.
+	TArray<uint8> CaptureSaveFile(const TArray<uint8>& UserMeta);
 
-	UFUNCTION(BlueprintCallable, Category = "Serialize Subsystem | Load")
-	void Load(FSerializedData Data);
+	// Checks File completely and travels to its map (ServerTravel: clients follow). Success = travel started,
+	// the final verdict arrives through OnLoadCompleted. Any other verdict is a refusal: only returned, never
+	// broadcast, and the current world is left untouched.
+	ESaveGameLoadResult LoadSaveFile(const TArray<uint8>& File);
 
-	UFUNCTION(BlueprintCallable, Category = "Serialize Subsystem | Load")
+	// Forgets every recorded state: worlds entered from now on start as authored.
+	UFUNCTION(BlueprintCallable, Category = "Serialize Subsystem")
+	void StartNewGame();
+
+	// Applies the pending record of Actor, once: for an actor whose save identity is known only after it spawned.
+	UFUNCTION(BlueprintCallable, Category = "Serialize Subsystem")
+	void RestoreActor(AActor* Actor);
+
+	// True from an accepted LoadSaveFile until OnLoadCompleted.
+	UFUNCTION(BlueprintPure, Category = "Serialize Subsystem")
 	bool IsLoadingSaveGame() const;
 
-	/**
-	 * Fired when a load attempt finishes — successfully or otherwise.
-	 * Check the Result parameter to distinguish success from each failure mode.
-	 */
-	UPROPERTY(BlueprintAssignable, Category = "SaveGamePlugin|Load")
+	// Save key of Actor (ADR-0060 §1); empty when the actor is not saved here.
+	FString GetActorSaveKey(const AActor* Actor) const;
+
+	// Readable list of the recorded states: scope, key, flags and size of every record.
+	FString DescribeRecords() const;
+
+#if !UE_BUILD_SHIPPING
+	// For every tracked placed actor whose state is no longer what its level authored: which parts differ and where.
+	FString DescribeDifferences() const;
+#endif
+
+	// Fired when an accepted load ends, successfully or not.
+	UPROPERTY(BlueprintAssignable, Category = "Serialize Subsystem")
 	FOnSaveGameLoadCompleted OnLoadCompleted;
 
 private:
-	void SaveStreamingLevels();
-	void LoadStreamingLevels();
+	/** Where an actor's record lives and what it is called. */
+	struct FActorKey final
+	{
+		FName Key;
+		bool bGlobal  = false;
+		bool bRespawn = false;
+		// Spawned without an identity: the key names a singleton of its class.
+		bool bClassKey = false;
+	};
 
-protected:
-	// World Event Handlers
-	void OnWorldInitialized(UWorld* World, const UWorld::InitializationValues);
-	void OnActorsInitialized(const FActorsInitializedParams& Params) const;
-	void OnWorldCleanup(UWorld* World, bool, bool) const;
+	// Starts tracking World when it is a server game world of this game instance; true when it is tracked now (false
+	// for a world a load is leaving).
+	bool EnsureWorld(UWorld* World);
+	void ReleaseWorld();
+	bool IsTrackedWorld(const UWorld* World) const;
 
-	// Streaming Level Event Handlers
-	void OnLevelAddedToWorld(ULevel* Level, UWorld* World);
-	void OnLevelRemovedFromWorld(ULevel* Level, UWorld* World);
+	static FActorKey MakeKey(const AActor* Actor, bool bSpawned);
+	// Live tracked actors of exactly Class.
+	int32 CountTrackedOfClass(const UClass* Class) const;
+	// The tracked actors and their entries, copied: game code run per actor may edit the map.
+	TArray<TPair<AActor*, FSaveGameTrackedActor>> SnapshotTracked() const;
+	// Save keys of the spawned actors tracked in the world now.
+	TSet<FName> CollectAliveSpawnKeys() const;
+	// The table Key's record lives in: global for players and singletons, the map's otherwise.
+	FSaveGameTable& GetTable(const FActorKey& Key) const;
 
-	// Actor Event Handlers
-	void OnActorPreSpawn(AActor* Actor) const;
-	void OnActorDestroyed(AActor* Actor) const;
+	// Records the pristine state of Level's saveable actors, applies their records and destroys tombstoned ones.
+	void ApplyLevel(const ULevel* Level) const;
+	// Applies global records to the tracked actors that have one (GameState, players already logged in).
+	void ApplyGlobalRecords();
+	// Spawns into Level every respawnable record of LevelKey (or of Keys, when given) whose actor is not alive.
+	void RespawnRecords(ULevel* Level, FName LevelKey, const TArray<FName>* Keys = nullptr) const;
+	void Respawn(ULevel* Level, FName Key, const FSaveGameRecord& Record) const;
+	static void ApplyRecord(AActor* Actor, const FSaveGameRecord& Record);
+	void RespawnPending();
 
-	// Deferred Event Handlers
-	void FinalizeLoad(ESaveGameLoadResult Result);
+	void CaptureActor(AActor* Actor, const FSaveGameTrackedActor& Tracked, const FActorKey& Key) const;
+	void CaptureAll() const;
 
-private:
-	// TSaveGameSerializer writes directly into PersistentLevelRecord and SerializedData to avoid
-	// extra copies — friend access is intentional, not an abstraction leak.
-	template <bool, bool>
-	friend class TSaveGameSerializer;
+	void FinishLoad(ESaveGameLoadResult Result);
 
-	// SharedPtr: SeamlessTravel is asynchronous; the serializer must outlive the current frame
-	// until OnActorsInitialized fires in the new map.
-	TSharedPtr<class FSaveGameSerializer, ESPMode::ThreadSafe> CurrentSerializer;
+	void HandlePostWorldInitialization(UWorld* World, UWorld::InitializationValues Values);
+	void HandleWorldInitializedActors(const FActorsInitializedParams& Params);
+	void HandleWorldBeginTearDown(UWorld* World) const;
+	void HandleWorldCleanup(UWorld* World, bool bSessionEnded, bool bCleanupResources);
+	void HandlePostLoadMap(UWorld* World);
+	void HandleLevelBeginMakingVisible(UWorld* World, const ULevelStreaming* StreamingLevel, ULevel* Level);
+	void HandleLevelAddedToWorld(ULevel* Level, UWorld* World) const;
+	void HandleWorldBeginPlay() const;
+	void HandlePreLevelRemoved(ULevel* Level, UWorld* World);
+	void HandlePostLogin(AGameModeBase* GameMode, APlayerController* NewPlayer);
+	void HandleActorPreSpawn(AActor* Actor) const;
+	void HandleActorDestroyed(AActor* Actor) const;
 
-	TSharedPtr<FLevelStruct> PersistentLevelRecord;
-	TSharedPtr<FSerializedData> SerializedData = MakeShared<FSerializedData>();
+	TSharedPtr<FSaveGameStore> Store;
+	TSharedPtr<FSaveGameWorldState> WorldState;
 
-	// Parallel arrays (index N in both refers to the same migration step).
-	// Populated in SerializeVersions; applied per-actor in SerializeActorData after
-	// deserialization, because ImportText_Direct requires a fully constructed UObject.
-	TArray<FMigration_SetDefaultValue> PendingDefaultMigrations;
-	TArray<TObjectPtr<UClass>> PendingDefaultMigrationClasses;
+	// Respawnable actors whose World Partition cell unloaded; spawned again in the persistent level next tick.
+	TArray<FName> PendingRespawns;
+
+	// Map a load travels to; empty when no load is in flight.
+	FString LoadTargetMap;
+
+	// The world running when a load was accepted: it is about to be thrown away and must not write records.
+	bool bDiscardCurrentWorld = false;
 };

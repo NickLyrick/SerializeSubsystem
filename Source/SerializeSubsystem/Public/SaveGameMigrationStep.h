@@ -1,3 +1,5 @@
+// All Rights Reserved by TacoEaters
+
 #pragma once
 
 #include "CoreMinimal.h"
@@ -28,12 +30,10 @@ struct SERIALIZESUBSYSTEM_API FSaveGameMigrationStep
 };
 
 /**
- * Registers a CoreRedirect for the duration of the load so that the old property name in
- * the archive resolves to the new property name in current code transparently.
- *
- * Registration happens inside SerializeVersions() (during header deserialization), before
- * FStructuredArchive starts parsing actor field names — that ordering is required for the
- * redirect to take effect.
+ * Registers a property CoreRedirect so that the old property name in a record resolves to the
+ * new one. It is registered the first time a record older than TargetVersion is read, before its
+ * properties are, and stays for the rest of the process (FCoreRedirects has no unregister): it
+ * then also applies to asset loads, so rename the property in config redirects as well.
  *
  * OwnerClassName is the short UE class name:
  *   C++ actors:       "AMyActor"

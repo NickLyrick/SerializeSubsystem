@@ -1,3 +1,5 @@
+// All Rights Reserved by TacoEaters
+
 #include "SaveGameSettings.h"
 
 FGuid USaveGameSettings::GetVersionId(const UEnum* VersionEnum) const

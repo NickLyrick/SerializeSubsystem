@@ -1,3 +1,5 @@
+// All Rights Reserved by TacoEaters
+
 #pragma once
 
 #include "CoreMinimal.h"
@@ -18,7 +20,7 @@
  * seeks to each field's stored offset before calling the deserialization function.
  */
 USTRUCT(BlueprintType, BlueprintInternalUseOnly)
-struct SERIALIZESUBSYSTEM_API FSaveGameArchive
+struct SERIALIZESUBSYSTEM_API FSaveGameArchive final
 {
 	GENERATED_BODY()
 
@@ -144,11 +146,8 @@ public:
 	 * cannot carry SaveGame (engine properties like transform, velocity, etc.) or to run
 	 * post-load fixup logic.
 	 *
-	 * Return value is required by the BlueprintNativeEvent contract (enables local variables
-	 * and SerializeItem usage in Blueprint) but is not checked by the serializer.
-	 *
-	 * Return false to exclude this actor from serialization entirely (useful for transient
-	 * actors that should not exist in a loaded save, e.g., tutorial markers).
+	 * Saving an actor: return false to leave it out of the save (no record; a spawned actor is then not
+	 * spawned again on load). The value is ignored for components and when loading.
 	 */
 	UFUNCTION(BlueprintNativeEvent, Category = SaveGame)
 	bool OnSerialize(UPARAM(ref) FSaveGameArchive& Archive, bool bIsLoading);
@@ -161,12 +160,12 @@ class USaveGameSpawnActor : public UInterface
 };
 
 /**
- * Implement on actors that are spawned by gameplay code before the save system runs
- * (e.g., the player character spawned by GameMode). The save system uses SpawnID to match
- * saved data to an already-spawned actor instead of trying to spawn a duplicate.
+ * Save identity of an actor the game spawns (ADR-0060 §1): its record is keyed by SpawnID. A respawnable actor
+ * (a dropped item) is spawned again by the plugin on load; one the game spawns itself (a player's PlayerState)
+ * returns false from ShouldRespawnOnLoad and only receives its record once it exists.
  *
- * SpawnID must be stable across sessions — generate once (e.g., from a GUID in a Data Asset)
- * and never change it.
+ * SpawnID must be stable across sessions: assigned once (a new GUID at spawn, or one derived from a stable
+ * identity) and never changed.
  */
 class SERIALIZESUBSYSTEM_API ISaveGameSpawnActor
 {
@@ -180,4 +179,12 @@ public:
 	/** Assigns a SpawnID to this actor (called by the save system after spawning). */
 	UFUNCTION(BlueprintNativeEvent, Category = "SaveGame|Spawn")
 	bool SetSpawnID(const FGuid& NewID);
+
+	/** Whether the plugin spawns this actor again when its save loads; false when the game spawns it itself. */
+	UFUNCTION(BlueprintNativeEvent, Category = "SaveGame|Spawn")
+	bool ShouldRespawnOnLoad() const;
+	virtual bool ShouldRespawnOnLoad_Implementation() const
+	{
+		return true;
+	}
 };

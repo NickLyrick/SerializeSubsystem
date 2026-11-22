@@ -1,3 +1,5 @@
+// All Rights Reserved by TacoEaters
+
 #pragma once
 
 #include "CoreMinimal.h"
@@ -9,11 +11,25 @@
 #include "SaveGameFunctionLibrary.generated.h"
 
 UCLASS()
-class SERIALIZESUBSYSTEM_API USaveGameFunctionLibrary : public UBlueprintFunctionLibrary
+class SERIALIZESUBSYSTEM_API USaveGameFunctionLibrary final : public UBlueprintFunctionLibrary
 {
 	GENERATED_BODY()
 
 public:
+	/**
+	 * Begins a deferred spawn of a respawnable ISaveGameSpawnActor in the persistent level, with a new SpawnID
+	 * (ADR-0060 §3): a World Partition cell that unloads does not take it along. Finish it with FinishSpawning.
+	 * Null when Class is not an ISaveGameSpawnActor or the world refused the spawn.
+	 */
+	static AActor* BeginSpawnSaveableActor(UWorld* World, UClass* Class, const FTransform& Transform, AActor* Owner);
+
+	// The same deferred spawn into Level with a given SpawnID: the save plugin respawns records through it.
+	static AActor* BeginSpawnSaveableActorInLevel(ULevel* Level,
+	                                              UClass* Class,
+	                                              const FTransform& Transform,
+	                                              const FGuid& SpawnId,
+	                                              AActor* Owner);
+
 	/**
 	 * Check if an object was loaded from an asset (i.e. a Static Mesh, Actor from
 	 * a level, etc.)
