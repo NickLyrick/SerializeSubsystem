@@ -16,6 +16,7 @@ class ULevel;
 class ULevelStreaming;
 struct FSaveGameRecord;
 struct FSaveGameStore;
+struct FSaveGameTable;
 struct FSaveGameTrackedActor;
 struct FSaveGameWorldState;
 
@@ -42,8 +43,8 @@ public:
 	TArray<uint8> CaptureSaveFile(const TArray<uint8>& UserMeta);
 
 	// Checks File completely and travels to its map (ServerTravel: clients follow). Success = travel started,
-	// the final verdict arrives through OnLoadCompleted; any other verdict is also broadcast (except Busy during a
-	// load in flight, whose listeners it is not for), and the current world is left untouched.
+	// the final verdict arrives through OnLoadCompleted. Any other verdict is a refusal: only returned, never
+	// broadcast, and the current world is left untouched.
 	ESaveGameLoadResult LoadSaveFile(const TArray<uint8>& File);
 
 	// Forgets every recorded state: worlds entered from now on start as authored.
@@ -69,7 +70,7 @@ public:
 	FString DescribeDifferences() const;
 #endif
 
-	// Fired when a load ends, successfully or not.
+	// Fired when an accepted load ends, successfully or not.
 	UPROPERTY(BlueprintAssignable, Category = "Serialize Subsystem")
 	FOnSaveGameLoadCompleted OnLoadCompleted;
 
@@ -80,9 +81,12 @@ private:
 		FName Key;
 		bool bGlobal  = false;
 		bool bRespawn = false;
+		// Spawned without an identity: the key names a singleton of its class.
+		bool bClassKey = false;
 	};
 
-	// Starts tracking World when it is a server game world of this game instance; true when it is tracked now.
+	// Starts tracking World when it is a server game world of this game instance; true when it is tracked now (false
+	// for a world a load is leaving).
 	bool EnsureWorld(UWorld* World);
 	void ReleaseWorld();
 	bool IsTrackedWorld(const UWorld* World) const;
@@ -92,6 +96,10 @@ private:
 	int32 CountTrackedOfClass(const UClass* Class) const;
 	// The tracked actors and their entries, copied: game code run per actor may edit the map.
 	TArray<TPair<AActor*, FSaveGameTrackedActor>> SnapshotTracked() const;
+	// Save keys of the spawned actors tracked in the world now.
+	TSet<FName> CollectAliveSpawnKeys() const;
+	// The table Key's record lives in: global for players and singletons, the map's otherwise.
+	FSaveGameTable& GetTable(const FActorKey& Key) const;
 
 	// Records the pristine state of Level's saveable actors, applies their records and destroys tombstoned ones.
 	void ApplyLevel(const ULevel* Level) const;
@@ -99,7 +107,7 @@ private:
 	void ApplyGlobalRecords();
 	// Spawns into Level every respawnable record of LevelKey (or of Keys, when given) whose actor is not alive.
 	void RespawnRecords(ULevel* Level, FName LevelKey, const TArray<FName>* Keys = nullptr) const;
-	AActor* Respawn(ULevel* Level, FName Key, const FSaveGameRecord& Record) const;
+	void Respawn(ULevel* Level, FName Key, const FSaveGameRecord& Record) const;
 	static void ApplyRecord(AActor* Actor, const FSaveGameRecord& Record);
 	void RespawnPending();
 

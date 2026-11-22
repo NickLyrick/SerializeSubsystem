@@ -2,6 +2,7 @@
 
 #include "SaveGameRecords.h"
 
+#include "Algo/Mismatch.h"
 #include "Components/ActorComponent.h"
 #include "GameFramework/Actor.h"
 #include "Misc/Crc.h"
@@ -94,11 +95,12 @@ namespace
 			}
 			const FString Owner = Rename->OwnerClassName.ToString();
 			const FString Old   = Owner + TEXT(".") + Rename->OldPropertyName.ToString();
-			if (RegisteredRenames.Contains(Old))
+			bool bAlreadyRegistered = false;
+			RegisteredRenames.Add(Old, &bAlreadyRegistered);
+			if (bAlreadyRegistered)
 			{
 				continue;
 			}
-			RegisteredRenames.Add(Old);
 			Redirects.Emplace(ECoreRedirectFlags::Type_Property, Old, Owner + TEXT(".") + Rename->NewPropertyName.ToString());
 		}
 		if (!Redirects.IsEmpty())
@@ -150,6 +152,36 @@ namespace
 	{
 		return Actor->GetComponentsByInterface(USaveGameObject::StaticClass());
 	}
+
+	// A version set in table order, both ways.
+	void SerializeVersionSet(FArchive& Archive, FSaveGameVersions& Set)
+	{
+		Set.CustomVersions.Serialize(Archive);
+		Archive << Set.EngineVersion;
+		Archive << Set.PackageVersion;
+	}
+
+	// A record's fields before its state, in table order, both ways.
+	void SerializeRecordFields(FArchive& Archive, FString& Key, FSaveGameRecord& Record, int32& SetIndex)
+	{
+		Archive << Key;
+		Archive << Record.Flags;
+		Archive << SetIndex;
+		if (!Record.HasFlag(SaveGameRecordFlags::Spawned))
+		{
+			return;
+		}
+		FString ClassPath = Record.Class.ToString();
+		FString LevelKey  = Record.LevelKey.ToString();
+		Archive << ClassPath;
+		Archive << Record.Transform;
+		Archive << LevelKey;
+		if (Archive.IsLoading())
+		{
+			Record.Class    = FSoftClassPath(ClassPath);
+			Record.LevelKey = FName(*LevelKey);
+		}
+	}
 } // namespace
 
 TSharedRef<FSaveGameVersions> FSaveGameVersions::MakeCurrent()
@@ -179,16 +211,12 @@ TArray<uint8> FSaveGameTable::Compress() const
 	TArray<uint8> Bytes;
 	FMemoryWriter Writer(Bytes);
 
+	// A saving archive only reads what it is given: the casts below hand const state to the two-way helpers.
 	int32 NumSets = Sets.Num();
 	Writer << NumSets;
 	for (const FSaveGameVersions* Set : Sets)
 	{
-		FCustomVersionContainer CustomVersions = Set->CustomVersions;
-		FEngineVersion EngineVersion          = Set->EngineVersion;
-		FPackageFileVersion PackageVersion    = Set->PackageVersion;
-		CustomVersions.Serialize(Writer);
-		Writer << EngineVersion;
-		Writer << PackageVersion;
+		SerializeVersionSet(Writer, const_cast<FSaveGameVersions&>(*Set));
 	}
 
 	int32 NumRecords = Records.Num();
@@ -197,23 +225,13 @@ TArray<uint8> FSaveGameTable::Compress() const
 	{
 		const FSaveGameRecord& Record = Pair.Value;
 		FString Key                   = Pair.Key.ToString();
-		uint8 Flags                   = Record.Flags;
 		int32 SetIndex                = Sets.IndexOfByKey(Record.Versions.Get());
-		Writer << Key;
-		Writer << Flags;
-		Writer << SetIndex;
-		if (Record.HasFlag(SaveGameRecordFlags::Spawned))
-		{
-			FString ClassPath   = Record.Class.ToString();
-			FTransform Transform = Record.Transform;
-			FString LevelKey    = Record.LevelKey.ToString();
-			Writer << ClassPath;
-			Writer << Transform;
-			Writer << LevelKey;
-		}
-		TArray<uint8> Data = Record.Data;
-		uint32 Crc         = FCrc::MemCrc32(Data.GetData(), Data.Num());
-		Writer << Data;
+		SerializeRecordFields(Writer, Key, const_cast<FSaveGameRecord&>(Record), SetIndex);
+		// The state goes in as TArray<uint8> serializes it, without a copy of it.
+		int32 DataSize = Record.Data.Num();
+		uint32 Crc     = FCrc::MemCrc32(Record.Data.GetData(), DataSize);
+		Writer << DataSize;
+		Writer.Serialize(const_cast<uint8*>(Record.Data.GetData()), DataSize);
 		Writer << Crc;
 	}
 
@@ -239,9 +257,7 @@ bool FSaveGameTable::Decompress(const TArray<uint8>& Blob, FSaveGameTable& OutTa
 	for (int32 Index = 0; Index < NumSets && !Reader.IsError(); ++Index)
 	{
 		TSharedRef<FSaveGameVersions> Set = MakeShared<FSaveGameVersions>();
-		Set->CustomVersions.Serialize(Reader);
-		Reader << Set->EngineVersion;
-		Reader << Set->PackageVersion;
+		SerializeVersionSet(Reader, *Set);
 		Sets.Add(Set);
 	}
 
@@ -259,19 +275,7 @@ bool FSaveGameTable::Decompress(const TArray<uint8>& Blob, FSaveGameTable& OutTa
 		FString Key;
 		FSaveGameRecord Record;
 		int32 SetIndex = INDEX_NONE;
-		Reader << Key;
-		Reader << Record.Flags;
-		Reader << SetIndex;
-		if (Record.HasFlag(SaveGameRecordFlags::Spawned))
-		{
-			FString ClassPath;
-			FString LevelKey;
-			Reader << ClassPath;
-			Reader << Record.Transform;
-			Reader << LevelKey;
-			Record.Class    = FSoftClassPath(ClassPath);
-			Record.LevelKey = FName(*LevelKey);
-		}
+		SerializeRecordFields(Reader, Key, Record, SetIndex);
 		uint32 Crc = 0;
 		Reader << Record.Data;
 		Reader << Crc;
@@ -487,11 +491,7 @@ FString FSaveGameActorSerializer::DescribeDifference(const TArray<uint8>& Before
 		{
 			continue;
 		}
-		int32 Offset = 0;
-		while (Offset < Old->Value.Num() && Offset < Part.Value.Num() && Old->Value[Offset] == Part.Value[Offset])
-		{
-			++Offset;
-		}
+		const int32 Offset = Algo::Mismatch(Old->Value, Part.Value);
 		Text += FString::Printf(TEXT("\n    %s: %d -> %d B, first difference at %d\n      before: %s\n      after:  %s"),
 		                        *Part.Key,
 		                        Old->Value.Num(),

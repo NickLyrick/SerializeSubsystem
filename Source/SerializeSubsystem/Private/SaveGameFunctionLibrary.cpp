@@ -11,20 +11,33 @@ AActor* USaveGameFunctionLibrary::BeginSpawnSaveableActor(UWorld* World,
                                                           const FTransform& Transform,
                                                           AActor* Owner)
 {
-	if (World == nullptr || Class == nullptr || !Class->ImplementsInterface(USaveGameSpawnActor::StaticClass()))
+	if (World == nullptr)
+	{
+		return nullptr;
+	}
+	return BeginSpawnSaveableActorInLevel(World->PersistentLevel, Class, Transform, FGuid::NewGuid(), Owner);
+}
+
+AActor* USaveGameFunctionLibrary::BeginSpawnSaveableActorInLevel(ULevel* Level,
+                                                                 UClass* Class,
+                                                                 const FTransform& Transform,
+                                                                 const FGuid& SpawnId,
+                                                                 AActor* Owner)
+{
+	if (Level == nullptr || Class == nullptr || !Class->ImplementsInterface(USaveGameSpawnActor::StaticClass()))
 	{
 		return nullptr;
 	}
 
 	FActorSpawnParameters Parameters;
 	Parameters.Owner                          = Owner;
-	Parameters.OverrideLevel                  = World->PersistentLevel;
+	Parameters.OverrideLevel                  = Level;
 	Parameters.bDeferConstruction             = true;
 	Parameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-	AActor* Actor = World->SpawnActor(Class, &Transform, Parameters);
+	AActor* Actor = Level->GetWorld()->SpawnActor(Class, &Transform, Parameters);
 	if (Actor != nullptr)
 	{
-		ISaveGameSpawnActor::Execute_SetSpawnID(Actor, FGuid::NewGuid());
+		ISaveGameSpawnActor::Execute_SetSpawnID(Actor, SpawnId);
 	}
 	return Actor;
 }

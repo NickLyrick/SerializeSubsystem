@@ -28,7 +28,6 @@ struct FSaveGamePristine final
 	int32 Size = 0;
 };
 
-/** Bookkeeping of the server game world the plugin works in (ADR-0060 §3). */
 /**
  * A replicated placed actor a tombstone destroyed while a net driver was up. Iris scopes a destruction to its level's
  * replication group, which exists only once the level's first actor replicates: stored before that, the destruction
@@ -44,6 +43,7 @@ struct FSaveGamePendingNetDestruction final
 	FVector Location = FVector::ZeroVector;
 };
 
+/** Bookkeeping of the server game world the plugin works in (ADR-0060 §3). */
 struct FSaveGameWorldState final
 {
 	// Every saveable actor of the world the plugin knows about.

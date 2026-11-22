@@ -29,7 +29,7 @@ public:
 	// GameId of this project (USaveGameSettings::GameId).
 	static FGuid GetProjectGameId();
 
-	// Compresses Data (Oodle) behind its uncompressed size.
+	// Compresses Data (Oodle, FOodleCompressedArray framing); empty when compression failed.
 	static TArray<uint8> Compress(const TArray<uint8>& Data);
 
 	// Inverse of Compress; false when Blob is not a valid compressed block.

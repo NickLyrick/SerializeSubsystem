@@ -2,7 +2,7 @@
 
 #include "SaveGameFile.h"
 
-#include "Misc/Compression.h"
+#include "Compression/OodleDataCompressionUtil.h"
 #include "Misc/Crc.h"
 #include "SaveGameSettings.h"
 #include "Serialization/MemoryReader.h"
@@ -76,6 +76,15 @@ namespace
 		return FCrc::MemCrc32(File.GetData() + OutLayout.BodyOffset, OutLayout.BodySize) == BodyCrc;
 	}
 
+	// The header fields in file order, both ways. GameId lives in the frame, outside the header bytes.
+	void SerializeHeaderFields(FArchive& Archive, FSaveGameFileHeader& Header)
+	{
+		Archive << Header.MapPath;
+		Archive << Header.SavedAtUtc;
+		Archive << Header.EngineVersion;
+		Archive << Header.UserMeta;
+	}
+
 	ESaveGameLoadResult ReadHeaderAt(const TArray<uint8>& File,
 	                                 const FFileLayout& Layout,
 	                                 FSaveGameFileHeader& OutHeader)
@@ -87,10 +96,7 @@ namespace
 
 		const TArray<uint8> HeaderBytes(File.GetData() + Layout.HeaderOffset, Layout.HeaderSize);
 		FMemoryReader Reader(HeaderBytes);
-		Reader << OutHeader.MapPath;
-		Reader << OutHeader.SavedAtUtc;
-		Reader << OutHeader.EngineVersion;
-		Reader << OutHeader.UserMeta;
+		SerializeHeaderFields(Reader, OutHeader);
 		OutHeader.GameId = Layout.GameId;
 		if (Reader.IsError() || Reader.Tell() != HeaderBytes.Num())
 		{
@@ -140,10 +146,7 @@ TArray<uint8> FSaveGameFile::Write(const FSaveGameFileHeader& Header, const TArr
 	{
 		FSaveGameFileHeader Copy = Header;
 		FMemoryWriter HeaderWriter(HeaderBytes);
-		HeaderWriter << Copy.MapPath;
-		HeaderWriter << Copy.SavedAtUtc;
-		HeaderWriter << Copy.EngineVersion;
-		HeaderWriter << Copy.UserMeta;
+		SerializeHeaderFields(HeaderWriter, Copy);
 	}
 
 	TArray<uint8> File;
@@ -174,61 +177,27 @@ FGuid FSaveGameFile::GetProjectGameId()
 
 TArray<uint8> FSaveGameFile::Compress(const TArray<uint8>& Data)
 {
-	const int64 UncompressedSize = Data.Num();
-	int64 Bound                  = 0;
-	FCompression::CompressMemoryBound(NAME_Oodle, Bound, UncompressedSize);
-
+	// The engine's framing: both sizes, then the Oodle block. It fails only on bad parameters or out of memory.
 	TArray<uint8> Blob;
-	Blob.SetNumUninitialized(sizeof(int64) + Bound);
-	FMemory::Memcpy(Blob.GetData(), &UncompressedSize, sizeof(int64));
-
-	int64 CompressedSize = Bound;
-	if (!FCompression::CompressMemory(
-	        NAME_Oodle, Blob.GetData() + sizeof(int64), CompressedSize, Data.GetData(), UncompressedSize))
+	if (!FOodleCompressedArray::CompressTArray(
+	        Blob, Data, FOodleDataCompression::ECompressor::Kraken, FOodleDataCompression::ECompressionLevel::Normal))
 	{
-		// Oodle never fails on a valid buffer; keep the bytes rather than lose the save.
-		UE_LOG(LogSaveGameFile, Error, TEXT("Compression failed; the table is stored uncompressed."));
-		CompressedSize = UncompressedSize;
-		Blob.SetNumUninitialized(sizeof(int64) + UncompressedSize);
-		FMemory::Memcpy(Blob.GetData() + sizeof(int64), Data.GetData(), UncompressedSize);
-		const int64 Marker = -UncompressedSize;
-		FMemory::Memcpy(Blob.GetData(), &Marker, sizeof(int64));
+		UE_LOG(LogSaveGameFile, Error, TEXT("Compressing %d bytes failed."), Data.Num());
+		Blob.Reset();
 	}
-	Blob.SetNum(sizeof(int64) + CompressedSize);
 	return Blob;
 }
 
 bool FSaveGameFile::Decompress(const TArray<uint8>& Blob, TArray<uint8>& OutData)
 {
-	if (Blob.Num() < static_cast<int32>(sizeof(int64)))
+	// The sizes are checked before anything is allocated: a damaged block must not ask for gigabytes.
+	int32 CompressedSize   = 0;
+	int32 DecompressedSize = 0;
+	const int32 DataOffset = FOodleCompressedArray::PeekSizes(Blob, CompressedSize, DecompressedSize);
+	if (DataOffset == 0 || DecompressedSize < 0 || DecompressedSize > MaxUncompressedSize ||
+	    static_cast<int64>(DataOffset) + CompressedSize != Blob.Num())
 	{
 		return false;
 	}
-
-	int64 Size = 0;
-	FMemory::Memcpy(&Size, Blob.GetData(), sizeof(int64));
-	const int64 PayloadSize = Blob.Num() - static_cast<int64>(sizeof(int64));
-
-	// A negative size marks a block stored as is (see Compress).
-	if (Size == MIN_int64)
-	{
-		return false;
-	}
-	if (Size < 0)
-	{
-		if (-Size != PayloadSize)
-		{
-			return false;
-		}
-		OutData = TArray<uint8>(Blob.GetData() + sizeof(int64), PayloadSize);
-		return true;
-	}
-
-	if (Size > MaxUncompressedSize)
-	{
-		return false;
-	}
-	OutData.SetNumUninitialized(Size);
-	return FCompression::UncompressMemory(
-	    NAME_Oodle, OutData.GetData(), Size, Blob.GetData() + sizeof(int64), PayloadSize);
+	return FOodleCompressedArray::DecompressToTArray(OutData, Blob);
 }

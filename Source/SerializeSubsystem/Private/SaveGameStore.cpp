@@ -35,17 +35,26 @@ TArray<uint8> FSaveGameStore::WriteBody() const
 	TArray<uint8> GlobalBlob = GlobalTable.Compress();
 	Writer << GlobalBlob;
 
-	TMap<FString, TArray<uint8>> Maps = MapBlobs;
-	if (!MapTablePath.IsEmpty() && !MapTable.Records.IsEmpty())
+	// The other maps' blobs go in as they are stored; the current map's table is compressed fresh. A saving
+	// archive only reads, hence the casts.
+	const bool bWithCurrentMap = !MapTablePath.IsEmpty() && !MapTable.Records.IsEmpty();
+	int32 NumMaps              = MapBlobs.Num();
+	if (bWithCurrentMap)
 	{
-		Maps.Add(MapTablePath, MapTable.Compress());
+		++NumMaps;
 	}
-	int32 NumMaps = Maps.Num();
 	Writer << NumMaps;
-	for (TPair<FString, TArray<uint8>>& Pair : Maps)
+	for (const TPair<FString, TArray<uint8>>& Pair : MapBlobs)
 	{
-		Writer << Pair.Key;
-		Writer << Pair.Value;
+		Writer << const_cast<FString&>(Pair.Key);
+		Writer << const_cast<TArray<uint8>&>(Pair.Value);
+	}
+	if (bWithCurrentMap)
+	{
+		FString MapPath       = MapTablePath;
+		TArray<uint8> MapBlob = MapTable.Compress();
+		Writer << MapPath;
+		Writer << MapBlob;
 	}
 	return Body;
 }

@@ -14,6 +14,7 @@
 #include "HAL/IConsoleManager.h"
 #include "Misc/PackageName.h"
 #include "SaveGameFile.h"
+#include "SaveGameFunctionLibrary.h"
 #include "SaveGameObject.h"
 #include "SaveGameSettings.h"
 #include "SaveGameStore.h"
@@ -43,9 +44,31 @@ namespace
 		return World != nullptr && World->IsGameWorld() && World->GetNetMode() != NM_Client;
 	}
 
+	// Long package name of Object's package, without the PIE prefix.
+	FString GetPackageNameWithoutPie(const UObject* Object)
+	{
+		return UWorld::RemovePIEPrefix(Object->GetPackage()->GetName());
+	}
+
 	FString GetMapPath(const UWorld* World)
 	{
-		return UWorld::RemovePIEPrefix(World->GetOutermost()->GetName());
+		return GetPackageNameWithoutPie(World);
+	}
+
+	FName MakeSpawnKey(const FGuid& SpawnId)
+	{
+		return FName(FString(SpawnKeyPrefix) + SpawnId.ToString(EGuidFormats::Digits));
+	}
+
+	// The spawn id MakeSpawnKey wrote into Key; invalid when Key is no spawn key.
+	FGuid ParseSpawnKey(const FName Key)
+	{
+		FGuid SpawnId;
+		if (const FString Text = Key.ToString(); Text.StartsWith(SpawnKeyPrefix))
+		{
+			FGuid::ParseExact(Text.RightChop(FCString::Strlen(SpawnKeyPrefix)), EGuidFormats::Digits, SpawnId);
+		}
+		return SpawnId;
 	}
 
 	// Levels whose actor names are unique across the whole map: the persistent level and World Partition cells.
@@ -61,12 +84,7 @@ namespace
 		{
 			return NAME_None;
 		}
-		return FName(*UWorld::RemovePIEPrefix(Level->GetOutermost()->GetName()));
-	}
-
-	bool IsClassKey(const FName Key)
-	{
-		return Key.ToString().StartsWith(ClassKeyPrefix);
+		return FName(GetPackageNameWithoutPie(Level));
 	}
 
 	FSaveGamePristine MakePristine(const TArray<uint8>& Data)
@@ -255,7 +273,7 @@ TArray<uint8> USerializeSubsystem::CaptureSaveFile(const TArray<uint8>& UserMeta
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(USerializeSubsystem::CaptureSaveFile);
 
-	if (UWorld* World = GetWorld(); IsLoadingSaveGame() || !EnsureWorld(World) || !IsTrackedWorld(World))
+	if (IsLoadingSaveGame() || !EnsureWorld(GetWorld()))
 	{
 		return TArray<uint8>();
 	}
@@ -316,14 +334,10 @@ ESaveGameLoadResult USerializeSubsystem::LoadSaveFile(const TArray<uint8>& File)
 		}
 	}
 
+	// A refusal is only returned: OnLoadCompleted ends accepted loads, and one may be in flight.
 	if (Result != ESaveGameLoadResult::Success)
 	{
 		UE_LOG(LogSerializeSubsystem, Warning, TEXT("Load refused: %s."), *UEnum::GetValueAsString(Result));
-		// OnLoadCompleted belongs to the load in flight: its listeners must not hear this request's refusal.
-		if (!IsLoadingSaveGame())
-		{
-			OnLoadCompleted.Broadcast(Result);
-		}
 		return Result;
 	}
 
@@ -351,7 +365,7 @@ void USerializeSubsystem::StartNewGame()
 
 void USerializeSubsystem::RestoreActor(AActor* Actor)
 {
-	if (!IsSaveable(Actor) || !EnsureWorld(Actor->GetWorld()) || !IsTrackedWorld(Actor->GetWorld()))
+	if (!IsSaveable(Actor) || !EnsureWorld(Actor->GetWorld()))
 	{
 		return;
 	}
@@ -376,7 +390,7 @@ void USerializeSubsystem::RestoreActor(AActor* Actor)
 		return;
 	}
 	// A class key names a singleton: with two of them alive neither can tell the record is its own.
-	if (IsClassKey(Key.Key) && CountTrackedOfClass(Actor->GetClass()) > 1)
+	if (Key.bClassKey && CountTrackedOfClass(Actor->GetClass()) > 1)
 	{
 		UE_LOG(LogSerializeSubsystem,
 		       Warning,
@@ -387,12 +401,7 @@ void USerializeSubsystem::RestoreActor(AActor* Actor)
 	Tracked.bRestored = true;
 	WorldState->Tracked.Add(Actor, Tracked);
 
-	const FSaveGameTable* Table = &Store->MapTable;
-	if (Key.bGlobal)
-	{
-		Table = &Store->GlobalTable;
-	}
-	if (const FSaveGameRecord* Record = Table->Records.Find(Key.Key))
+	if (const FSaveGameRecord* Record = GetTable(Key).Records.Find(Key.Key))
 	{
 		const FSaveGameRecord Copy = *Record;
 		ApplyRecord(Actor, Copy);
@@ -468,7 +477,7 @@ bool USerializeSubsystem::EnsureWorld(UWorld* World)
 	}
 	if (WorldState.IsValid() && WorldState->World.Get() == World)
 	{
-		return true;
+		return IsTrackedWorld(World);
 	}
 
 	ReleaseWorld();
@@ -514,26 +523,26 @@ USerializeSubsystem::FActorKey USerializeSubsystem::MakeKey(const AActor* Actor,
 	FActorKey Result;
 	if (!bSpawned)
 	{
-		FString Key = Actor->GetName();
+		Result.Key = Actor->GetFName();
 		if (const FName LevelKey = GetLevelKey(Actor->GetLevel()); !LevelKey.IsNone())
 		{
-			Key = LevelKey.ToString() + TEXT(":") + Key;
+			Result.Key = FName(LevelKey.ToString() + TEXT(":") + Actor->GetName());
 		}
-		Result.Key = FName(*Key);
 		return Result;
 	}
 
 	if (const FGuid SpawnId = GetSpawnId(Actor); SpawnId.IsValid())
 	{
-		Result.Key      = FName(FString(SpawnKeyPrefix) + SpawnId.ToString(EGuidFormats::Digits));
+		Result.Key      = MakeSpawnKey(SpawnId);
 		Result.bRespawn = ISaveGameSpawnActor::Execute_ShouldRespawnOnLoad(Actor);
 		Result.bGlobal  = !Result.bRespawn;
 		return Result;
 	}
 
 	// Spawned without an identity: a singleton of its class (GameState).
-	Result.Key     = FName(FString(ClassKeyPrefix) + Actor->GetClass()->GetPathName());
-	Result.bGlobal = true;
+	Result.Key       = FName(FString(ClassKeyPrefix) + Actor->GetClass()->GetPathName());
+	Result.bGlobal   = true;
+	Result.bClassKey = true;
 	return Result;
 }
 
@@ -567,9 +576,38 @@ TArray<TPair<AActor*, FSaveGameTrackedActor>> USerializeSubsystem::SnapshotTrack
 	return Snapshot;
 }
 
+TSet<FName> USerializeSubsystem::CollectAliveSpawnKeys() const
+{
+	TSet<FName> Alive;
+	for (const TPair<AActor*, FSaveGameTrackedActor>& Entry : SnapshotTracked())
+	{
+		if (Entry.Value.bSpawned)
+		{
+			Alive.Add(MakeKey(Entry.Key, true).Key);
+		}
+	}
+	return Alive;
+}
+
+FSaveGameTable& USerializeSubsystem::GetTable(const FActorKey& Key) const
+{
+	if (Key.bGlobal)
+	{
+		return Store->GlobalTable;
+	}
+	return Store->MapTable;
+}
+
 void USerializeSubsystem::ApplyLevel(const ULevel* Level) const
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(USerializeSubsystem::ApplyLevel);
+
+	// Before the world initializes its actors AActor::ProcessEvent runs no events, OnSerialize and the spawn-id
+	// queries included: such a level is applied in HandleWorldInitializedActors, still before BeginPlay.
+	if (!Level->GetWorld()->AreActorsInitialized())
+	{
+		return;
+	}
 	UE_LOG(LogSerializeSubsystem, Verbose, TEXT("Applying level %s (%d actors)."), *Level->GetOutermost()->GetName(), Level->Actors.Num());
 
 	// Shown again with the same level object: hidden without unloading, or unloaded and asked back before garbage
@@ -579,14 +617,7 @@ void USerializeSubsystem::ApplyLevel(const ULevel* Level) const
 	TArray<TPair<TWeakObjectPtr<AActor>, FSaveGameTrackedActor>> Hidden;
 	if (WorldState->HiddenLevels.RemoveAndCopyValue(Level, Hidden))
 	{
-		TSet<FName> Alive;
-		for (const TPair<AActor*, FSaveGameTrackedActor>& Entry : SnapshotTracked())
-		{
-			if (Entry.Value.bSpawned)
-			{
-				Alive.Add(MakeKey(Entry.Key, true).Key);
-			}
-		}
+		const TSet<FName> Alive = CollectAliveSpawnKeys();
 		for (const TPair<TWeakObjectPtr<AActor>, FSaveGameTrackedActor>& Entry : Hidden)
 		{
 			AActor* Actor = Entry.Key.Get();
@@ -639,7 +670,7 @@ void USerializeSubsystem::ApplyLevel(const ULevel* Level) const
 		{
 			WorldState->Pristine.Add(Key.Key, MakePristine(Pristine));
 #if !UE_BUILD_SHIPPING
-			WorldState->PristineData.Add(Key.Key, Pristine);
+			WorldState->PristineData.Add(Key.Key, MoveTemp(Pristine));
 #endif
 		}
 
@@ -680,31 +711,49 @@ void USerializeSubsystem::RespawnRecords(ULevel* Level, const FName LevelKey, co
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(USerializeSubsystem::RespawnRecords);
 
-	// Alive = tracked in the world. A copy left in a level that went away does not count: if that level comes back,
-	// ApplyLevel destroys the copy.
-	TSet<FName> Alive;
-	for (const TPair<AActor*, FSaveGameTrackedActor>& Entry : SnapshotTracked())
+	// The same limit as ApplyLevel: a spawn before actors are initialized gets no OnSerialize.
+	if (!Level->GetWorld()->AreActorsInitialized())
 	{
-		if (Entry.Value.bSpawned)
-		{
-			Alive.Add(MakeKey(Entry.Key, true).Key);
-		}
+		return;
 	}
 
-	// Keys first, spawns after: a spawned actor's own load may edit the table.
+	// Candidates first: the respawnable records of LevelKey, or the given keys.
 	TArray<FName> ToSpawn;
-	for (const TPair<FName, FSaveGameRecord>& Pair : Store->MapTable.Records)
+	if (Keys != nullptr)
 	{
-		const bool bSelected = Keys == nullptr || Keys->Contains(Pair.Key);
-		if (bSelected && Pair.Value.HasFlag(SaveGameRecordFlags::Respawn) &&
-		    (Keys != nullptr || Pair.Value.LevelKey == LevelKey) && !Alive.Contains(Pair.Key))
+		for (const FName Key : *Keys)
 		{
-			ToSpawn.Add(Pair.Key);
+			if (const FSaveGameRecord* Record = Store->MapTable.Records.Find(Key);
+			    Record != nullptr && Record->HasFlag(SaveGameRecordFlags::Respawn))
+			{
+				ToSpawn.Add(Key);
+			}
 		}
 	}
+	else
+	{
+		for (const TPair<FName, FSaveGameRecord>& Pair : Store->MapTable.Records)
+		{
+			if (Pair.Value.HasFlag(SaveGameRecordFlags::Respawn) && Pair.Value.LevelKey == LevelKey)
+			{
+				ToSpawn.Add(Pair.Key);
+			}
+		}
+	}
+	if (ToSpawn.IsEmpty())
+	{
+		return;
+	}
 
+	// Alive = tracked in the world. A copy left in a level that went away does not count: if that level comes back,
+	// ApplyLevel destroys the copy. Keys first, spawns after: a spawned actor's own load may edit the table.
+	const TSet<FName> Alive = CollectAliveSpawnKeys();
 	for (const FName Key : ToSpawn)
 	{
+		if (Alive.Contains(Key))
+		{
+			continue;
+		}
 		if (const FSaveGameRecord* Record = Store->MapTable.Records.Find(Key))
 		{
 			const FSaveGameRecord Copy = *Record;
@@ -713,28 +762,22 @@ void USerializeSubsystem::RespawnRecords(ULevel* Level, const FName LevelKey, co
 	}
 }
 
-AActor* USerializeSubsystem::Respawn(ULevel* Level, const FName Key, const FSaveGameRecord& Record) const
+void USerializeSubsystem::Respawn(ULevel* Level, const FName Key, const FSaveGameRecord& Record) const
 {
-	UClass* Class = Record.Class.TryLoadClass<AActor>();
-	FGuid SpawnId;
-	FGuid::Parse(Key.ToString().RightChop(FCString::Strlen(SpawnKeyPrefix)), SpawnId);
+	UClass* Class       = Record.Class.TryLoadClass<AActor>();
+	const FGuid SpawnId = ParseSpawnKey(Key);
 	if (Class == nullptr || !SpawnId.IsValid())
 	{
 		UE_LOG(LogSerializeSubsystem, Error, TEXT("Cannot respawn '%s' of class '%s'."), *Key.ToString(), *Record.Class.ToString());
-		return nullptr;
+		return;
 	}
 
-	FActorSpawnParameters Parameters;
-	Parameters.OverrideLevel                  = Level;
-	Parameters.bDeferConstruction             = true;
-	Parameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-	AActor* Actor = Level->GetWorld()->SpawnActor(Class, &Record.Transform, Parameters);
+	AActor* Actor =
+	    USaveGameFunctionLibrary::BeginSpawnSaveableActorInLevel(Level, Class, Record.Transform, SpawnId, nullptr);
 	if (Actor == nullptr)
 	{
-		return nullptr;
+		return;
 	}
-
-	ISaveGameSpawnActor::Execute_SetSpawnID(Actor, SpawnId);
 	// Construction scripts add components a record may name: the state goes in once the actor is whole.
 	Actor->FinishSpawning(Record.Transform);
 	if (FSaveGameTrackedActor* Tracked = WorldState->Tracked.Find(Actor))
@@ -742,7 +785,6 @@ AActor* USerializeSubsystem::Respawn(ULevel* Level, const FName Key, const FSave
 		Tracked->bRestored = true;
 	}
 	ApplyRecord(Actor, Record);
-	return Actor;
 }
 
 void USerializeSubsystem::ApplyRecord(AActor* Actor, const FSaveGameRecord& Record)
@@ -779,11 +821,7 @@ void USerializeSubsystem::RespawnPending()
 
 void USerializeSubsystem::CaptureActor(AActor* Actor, const FSaveGameTrackedActor& Tracked, const FActorKey& Key) const
 {
-	FSaveGameTable* Table = &Store->MapTable;
-	if (Key.bGlobal)
-	{
-		Table = &Store->GlobalTable;
-	}
+	FSaveGameTable* Table = &GetTable(Key);
 
 	TArray<uint8> Data;
 	if (!FSaveGameActorSerializer::Write(Actor, *Store->CurrentVersions, Data))
@@ -836,7 +874,7 @@ void USerializeSubsystem::CaptureAll() const
 		}
 
 		const FActorKey Key = MakeKey(Actor, Entry.Value.bSpawned);
-		if (IsClassKey(Key.Key))
+		if (Key.bClassKey)
 		{
 			bool bAlreadySeen = false;
 			Singletons.Add(Key.Key, &bAlreadySeen);
@@ -866,7 +904,7 @@ void USerializeSubsystem::HandlePostWorldInitialization(UWorld* World, UWorld::I
 
 void USerializeSubsystem::HandleWorldInitializedActors(const FActorsInitializedParams& Params)
 {
-	if (!EnsureWorld(Params.World) || !IsTrackedWorld(Params.World))
+	if (!EnsureWorld(Params.World))
 	{
 		return;
 	}
@@ -906,7 +944,7 @@ void USerializeSubsystem::HandleWorldCleanup(UWorld* World, bool /*bSessionEnded
 
 void USerializeSubsystem::HandlePostLoadMap(UWorld* World)
 {
-	if (!EnsureWorld(World) || !IsTrackedWorld(World))
+	if (!EnsureWorld(World))
 	{
 		return;
 	}
@@ -934,7 +972,7 @@ void USerializeSubsystem::HandleLevelBeginMakingVisible(UWorld* World,
 {
 	// Before the world initializes its actors AActor::ProcessEvent runs no events, OnSerialize included: a level
 	// shown that early (the starting cells) is applied in HandleWorldInitializedActors, still before BeginPlay.
-	if (Level == nullptr || !EnsureWorld(World) || !IsTrackedWorld(World) || !World->AreActorsInitialized())
+	if (Level == nullptr || !EnsureWorld(World) || !World->AreActorsInitialized())
 	{
 		return;
 	}
@@ -953,15 +991,19 @@ void USerializeSubsystem::HandleLevelBeginMakingVisible(UWorld* World,
 
 void USerializeSubsystem::HandleLevelAddedToWorld(ULevel* Level, UWorld* World) const
 {
+	if (Level == nullptr || !IsTrackedWorld(World))
+	{
+		return;
+	}
 	// Spawned actors of a plain sublevel come back once the level transform is applied: spawned earlier, the
 	// level would move them by its offset a second time.
 	// A level added before actors are initialized gets its respawns in HandleWorldInitializedActors.
-	if (Level != nullptr && !IsMapLevel(Level) && IsTrackedWorld(World) && World->AreActorsInitialized())
+	if (!IsMapLevel(Level))
 	{
 		RespawnRecords(Level, GetLevelKey(Level));
 	}
 	// Its actors have begun play and replicate now. Levels added before the world began play wait for that.
-	if (Level != nullptr && IsTrackedWorld(World) && World->HasBegunPlay())
+	if (World->HasBegunPlay())
 	{
 		StorePendingNetDestructions(*World, Level, WorldState->PendingNetDestructions);
 	}
@@ -987,7 +1029,7 @@ void USerializeSubsystem::HandlePreLevelRemoved(ULevel* Level, UWorld* World)
 	// Unloading, not just hiding: a cell's respawnable actors go with it and come back in the persistent level.
 	const ULevelStreaming* Streaming = ULevelStreaming::FindStreamingLevel(Level);
 	const bool bUnloadingCell = Level->IsWorldPartitionRuntimeCell() && (Streaming == nullptr || !Streaming->ShouldBeLoaded());
-	WorldState->HiddenLevels.FindOrAdd(Level).Reset();
+	TArray<TPair<TWeakObjectPtr<AActor>, FSaveGameTrackedActor>> Hidden;
 	for (const TPair<AActor*, FSaveGameTrackedActor>& Entry : SnapshotTracked())
 	{
 		AActor* Actor = Entry.Key;
@@ -1003,9 +1045,17 @@ void USerializeSubsystem::HandlePreLevelRemoved(ULevel* Level, UWorld* World)
 		{
 			PendingRespawns.AddUnique(Key.Key);
 		}
+#if !UE_BUILD_SHIPPING
+		// The debug bytes go with the cell; the hash stays, a reused level is captured against it.
+		if (bUnloadingCell && !Entry.Value.bSpawned)
+		{
+			WorldState->PristineData.Remove(Key.Key);
+		}
+#endif
 		WorldState->Tracked.Remove(Actor);
-		WorldState->HiddenLevels.FindOrAdd(Level).Emplace(Actor, Entry.Value);
+		Hidden.Emplace(Actor, Entry.Value);
 	}
+	WorldState->HiddenLevels.Add(Level, MoveTemp(Hidden));
 	// Levels unloaded since they were hidden leave stale keys behind.
 	for (TMap<TWeakObjectPtr<const ULevel>, TArray<TPair<TWeakObjectPtr<AActor>, FSaveGameTrackedActor>>>::TIterator It(
 	         WorldState->HiddenLevels);

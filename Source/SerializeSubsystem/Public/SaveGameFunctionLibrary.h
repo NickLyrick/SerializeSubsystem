@@ -23,6 +23,13 @@ public:
 	 */
 	static AActor* BeginSpawnSaveableActor(UWorld* World, UClass* Class, const FTransform& Transform, AActor* Owner);
 
+	// The same deferred spawn into Level with a given SpawnID: the save plugin respawns records through it.
+	static AActor* BeginSpawnSaveableActorInLevel(ULevel* Level,
+	                                              UClass* Class,
+	                                              const FTransform& Transform,
+	                                              const FGuid& SpawnId,
+	                                              AActor* Owner);
+
 	/**
 	 * Check if an object was loaded from an asset (i.e. a Static Mesh, Actor from
 	 * a level, etc.)
